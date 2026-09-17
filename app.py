@@ -119,8 +119,8 @@ async def deck_cb(c):
     deck = c.data.split(':', 1)[1]
     db.set_pending(uid, deck, 'free', '')
     await c.message.answer(
-        f'Давай погадаем на {DECK_NAMES[deck]}\n\n'
-        'Сформулируй свой вопрос и напиши его полностью ❤️\n\n'
+        f'Давай погадаем на {DECK_NAMES[deck]}\\n\\n'
+        'Сформулируй свой вопрос и напиши его полностью ❤️\\n\\n'
         'Например: Что ждет меня в следующем месяце?'
     )
 
@@ -128,6 +128,7 @@ async def deck_cb(c):
 async def day_cb(c):
     await c.answer()
     uid = c.from_user.id
+    print(f'[BOT] day_click user_id={uid}')
     u = db.get(uid)
     total = (int(u['requests']) + int(u['paid_requests'])) if u else 0
     if total <= 0:
@@ -137,7 +138,7 @@ async def day_cb(c):
     mode = 'premium' if int(u['paid_requests']) > 0 else 'free'
     db.set_pending(uid, 'day', mode, 'Карта дня')
     await c.message.answer(
-        'Сегодняшняя карта уже ждёт тебя 🧘🏼\n\nПереходим к картам.',
+        'Сегодняшняя карта уже ждёт тебя 🧘🏼\\n\\nПереходим к картам.',
         reply_markup=mini_button('day', mode)
     )
 
@@ -147,8 +148,8 @@ async def meaning_cb(c):
     uid = c.from_user.id
     db.set_pending(uid, 'meaning', 'meaning', '')
     await c.message.answer(
-        'Давай посмотрим значение любой карты, которая тебе интересна ✨\n\n'
-        'Просто введи название одной карты\n\n'
+        'Давай посмотрим значение любой карты, которая тебе интересна ✨\\n\\n'
+        'Просто введи название одной карты\\n\\n'
         'Например: Двойка мечей или Умеренность'
     )
 
@@ -181,8 +182,11 @@ async def pack(c):
 
 @router.message(F.text)
 async def text_message(m):
-    p=db.get_pending(m.from_user.id)
-    if not p: return
+    uid = m.from_user.id
+    p = db.get_pending(uid)
+    print(f'[BOT] text_message user_id={uid} pending={bool(p)}')
+    if not p:
+        return
     if p['deck']=='payment':
         import re
         email=m.text.strip()
@@ -300,7 +304,7 @@ async def mini_select(request:Request):
     if not question or question['deck']!=deck: db.add(uid,1); raise HTTPException(409,'Вопрос не найден')
     await bot.send_message(uid,'Отправляем ваш запрос во Вселенную... Подождите...')
     try:
-        answer=await ask(deck,question['question'],[{'name':n} for n in cards],paid=premium,day=(deck=='day'))
+        answer=await ask(deck,question['question'],cards,paid=premium,day=(deck=='day'))
         db.reading(uid,deck,mode,question['question'],json.dumps(names,ensure_ascii=False),answer)
         db.clear_pending(uid)
         left=db.balance(uid)+int(db.get(uid)['paid_requests'])
@@ -350,7 +354,7 @@ def admin_page():
     prows=''.join(f'<tr><td>{p["created_at"][:19].replace("T"," ")}</td><td>{html.escape(p["name"] or str(p["user_id"]))}</td><td>{p["amount"]} ₽</td><td>{p["requests"]}</td><td>{html.escape(p["status"] or "")}</td></tr>' for p in pays)
     return f'''<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Lilit Admin</title><style>
 body{{margin:0;background:#090816;color:#f5e9c8;font:14px Arial,sans-serif}}.wrap{{max-width:1250px;margin:auto;padding:28px}}h1{{font-weight:500;letter-spacing:1px}}h2{{font-weight:500}}.grid{{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}}.card,section{{background:#15132a;border:1px solid #302a52;border-radius:16px;padding:18px;box-shadow:0 10px 30px #0003}}.num{{font-size:28px;margin-top:8px}}table{{width:100%;border-collapse:collapse;min-width:760px}}.scroll{{overflow:auto}}td,th{{padding:10px;border-bottom:1px solid #292440;text-align:left;white-space:nowrap}}input,textarea,button{{padding:10px;border-radius:9px;border:1px solid #4b416e;background:#0d0c1c;color:#fff}}textarea{{width:100%;min-height:100px}}button{{cursor:pointer;background:#d7bb73;color:#171225;font-weight:bold}}.pill{{display:inline-block;padding:8px 12px;border:1px solid #4b416e;border-radius:999px;margin:4px}}form.row{{display:flex;gap:10px;flex-wrap:wrap}}.muted{{color:#aaa2bc}}</style></head><body><div class="wrap"><h1>Лилит · Панель управления</h1><p class="muted">Один сервер · одна база SQLite · бот + Mini App + платежи</p><div class="grid"><div class="card">Пользователи<div class="num">{s['users']}</div></div><div class="card">Активные 7 дней<div class="num">{s['active']}</div></div><div class="card">Расклады<div class="num">{s['questions']}</div></div><div class="card">Платежи<div class="num">{s['payments']}</div></div><div class="card">Выручка<div class="num">{s['revenue']} ₽</div></div></div><br>
-<section><h2>Начислить запросы</h2><form class="row" method="post" action="/admin/add-requests"><input name="uid" placeholder="Telegram ID" required><input name="amount" type="number" min="1" placeholder="Количество" required><button>Начислить</button></form></section><br>
+<section><h2>Начислить запросы</h2><form class="row" method="post" action="/admin/add-requests"><input name="uid" placeholder="Telegram ID (только цифры)" required><input name="amount" type="number" min="1" placeholder="Количество" required><button>Начислить</button></form></section><br>
 <section><h2>Рассылка</h2><form method="post" action="/admin/broadcast"><textarea name="text" placeholder="Текст сообщения" required></textarea><br><br><button>Отправить всем пользователям</button></form></section><br>
 <section><h2>Источники</h2>{sources}</section><br>
 <section><h2>Последние вопросы</h2><div class="scroll"><table><tr><th>Дата</th><th>Клиент</th><th>Колода</th><th>Вопрос</th></tr>{rrows}</table></div></section><br>
@@ -365,10 +369,65 @@ async def admin(request:Request):
 
 @app.post('/admin/add-requests')
 async def admin_add(request:Request):
-    if not auth_ok(request): raise HTTPException(401,'Unauthorized')
-    form=await request.form(); uid=int(form['uid']); amount=int(form['amount']);
-    if not db.get(uid): raise HTTPException(404,'Пользователь не найден')
-    db.add(uid,amount); db.event(uid,'admin_add',str(amount)); return HTMLResponse('<meta http-equiv="refresh" content="0;url=/admin">')
+    if not auth_ok(request):
+        raise HTTPException(401, 'Unauthorized')
+
+    form = await request.form()
+    uid_raw = str(form.get('uid', '')).strip()
+    amount_raw = str(form.get('amount', '')).strip()
+
+    try:
+        uid = int(uid_raw)
+    except (TypeError, ValueError):
+        return HTMLResponse(
+            '<meta charset="utf-8">'
+            '<div style="font-family:Arial;padding:30px">'
+            '<h2>Ошибка</h2>'
+            '<p>В поле Telegram ID нужно указать числовой ID пользователя.</p>'
+            '<p>Например: 123456789</p>'
+            '<p><a href="/admin">Вернуться в админку</a></p>'
+            '</div>',
+            status_code=400
+        )
+
+    try:
+        amount = int(amount_raw)
+    except (TypeError, ValueError):
+        return HTMLResponse(
+            '<meta charset="utf-8">'
+            '<div style="font-family:Arial;padding:30px">'
+            '<h2>Ошибка</h2>'
+            '<p>Количество запросов должно быть целым числом.</p>'
+            '<p><a href="/admin">Вернуться в админку</a></p>'
+            '</div>',
+            status_code=400
+        )
+
+    if amount < 1:
+        return HTMLResponse(
+            '<meta charset="utf-8">'
+            '<div style="font-family:Arial;padding:30px">'
+            '<h2>Ошибка</h2>'
+            '<p>Количество запросов должно быть не меньше 1.</p>'
+            '<p><a href="/admin">Вернуться в админку</a></p>'
+            '</div>',
+            status_code=400
+        )
+
+    if not db.get(uid):
+        return HTMLResponse(
+            '<meta charset="utf-8">'
+            '<div style="font-family:Arial;padding:30px">'
+            '<h2>Ошибка</h2>'
+            '<p>Пользователь с таким Telegram ID не найден.</p>'
+            '<p><a href="/admin">Вернуться в админку</a></p>'
+            '</div>',
+            status_code=404
+        )
+
+    db.add(uid, amount)
+    db.event(uid, 'admin_add', str(amount))
+    return HTMLResponse('<meta http-equiv="refresh" content="0;url=/admin">')
 
 @app.post('/admin/broadcast')
 async def broadcast(request:Request):
