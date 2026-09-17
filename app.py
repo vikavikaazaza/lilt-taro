@@ -113,15 +113,54 @@ async def rune(m): await deck_start(m,'runes')
 async def taro(m): await meaning_start(m)
 
 @router.callback_query(F.data.startswith('deck:'))
-async def deck_cb(c): await c.answer(); await deck_start(c.message,c.data.split(':',1)[1])
+async def deck_cb(c):
+    await c.answer()
+    uid = c.from_user.id
+    deck = c.data.split(':', 1)[1]
+    db.set_pending(uid, deck, 'free', '')
+    await c.message.answer(
+        f'Давай погадаем на {DECK_NAMES[deck]}\n\n'
+        'Сформулируй свой вопрос и напиши его полностью ❤️\n\n'
+        'Например: Что ждет меня в следующем месяце?'
+    )
+
 @router.callback_query(F.data=='day')
-async def day_cb(c): await c.answer(); await day_start(c.message)
+async def day_cb(c):
+    await c.answer()
+    uid = c.from_user.id
+    u = db.get(uid)
+    total = (int(u['requests']) + int(u['paid_requests'])) if u else 0
+    if total <= 0:
+        await c.message.answer('У вас осталось 0 запросов.')
+        await subscription(c.message)
+        return
+    mode = 'premium' if int(u['paid_requests']) > 0 else 'free'
+    db.set_pending(uid, 'day', mode, 'Карта дня')
+    await c.message.answer(
+        'Сегодняшняя карта уже ждёт тебя 🧘🏼\n\nПереходим к картам.',
+        reply_markup=mini_button('day', mode)
+    )
+
 @router.callback_query(F.data=='meaning')
-async def meaning_cb(c): await c.answer(); await meaning_start(c.message)
+async def meaning_cb(c):
+    await c.answer()
+    uid = c.from_user.id
+    db.set_pending(uid, 'meaning', 'meaning', '')
+    await c.message.answer(
+        'Давай посмотрим значение любой карты, которая тебе интересна ✨\n\n'
+        'Просто введи название одной карты\n\n'
+        'Например: Двойка мечей или Умеренность'
+    )
+
 @router.callback_query(F.data=='friend')
-async def friend_cb(c): await c.answer(); await friend_show(c.message)
+async def friend_cb(c):
+    await c.answer()
+    await friend_show(c.message)
+
 @router.callback_query(F.data=='pay')
-async def pay_cb(c): await c.answer(); await subscription(c.message)
+async def pay_cb(c):
+    await c.answer()
+    await subscription(c.message)
 
 async def meaning_start(m):
     db.set_pending(m.from_user.id,'meaning','meaning','')
