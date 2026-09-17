@@ -304,12 +304,21 @@ async def mini_select(request:Request):
     if not question or question['deck']!=deck: db.add(uid,1); raise HTTPException(409,'Вопрос не найден')
     await bot.send_message(uid,'Отправляем ваш запрос во Вселенную... Подождите...')
     try:
+        print(f'[READING] user_id={uid} deck={deck} question={question["question"]!r} selected_cards={names!r}')
         answer=await ask(deck,question['question'],cards,paid=premium,day=(deck=='day'))
         db.reading(uid,deck,mode,question['question'],json.dumps(names,ensure_ascii=False),answer)
         db.clear_pending(uid)
         left=db.balance(uid)+int(db.get(uid)['paid_requests'])
         await bot.send_message(uid,answer)
-        await bot.send_message(uid,f'Ваше количество запросов: {left}\n\nЗадайте вопрос')
+        # После ответа сразу готовим следующий вопрос в той же колоде.
+        # Поэтому пользователь может просто написать новый вопрос, не нажимая меню заново.
+        db.set_pending(uid, deck, mode, '')
+        await bot.send_message(
+            uid,
+            f'Давай погадаем на {DECK_NAMES[deck]}\\n\\n'
+            'Сформулируй свой вопрос и напиши его полностью ❤️\\n\\n'
+            'Например: Что ждет меня в следующем месяце?'
+        )
         return {'ok':True,'left':left}
     except Exception as e:
         db.add(uid,1)
