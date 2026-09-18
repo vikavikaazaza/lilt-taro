@@ -24,14 +24,12 @@ WAITE=[
 'Туз Мечей','Двойка Мечей','Тройка Мечей','Четвёрка Мечей','Пятёрка Мечей','Шестёрка Мечей','Семёрка Мечей','Восьмёрка Мечей','Девятка Мечей','Десятка Мечей','Паж Мечей','Рыцарь Мечей','Королева Мечей','Король Мечей',
 'Туз Пентаклей','Двойка Пентаклей','Тройка Пентаклей','Четвёрка Пентаклей','Пятёрка Пентаклей','Шестёрка Пентаклей','Семёрка Пентаклей','Восьмёрка Пентаклей','Девятка Пентаклей','Десятка Пентаклей','Паж Пентаклей','Рыцарь Пентаклей','Королева Пентаклей','Король Пентаклей']
 MANARA=['Дурак','Маг','Верховная Жрица','Императрица','Император','Верховный Жрец','Возлюбленные','Колесница','Справедливость','Отшельник','Зеркало','Сила','Наказание','Смерть','Умеренность','Дьявол','Башня','Звезда','Луна','Солнце','Суд','Мир','Туз Огня','Двойка Огня','Тройка Огня','Четверка Огня','Пятерка Огня','Шестерка Огня','Семерка Огня','Восьмерка Огня','Девятка Огня','Десятка Огня','Слуга Огня','Всадница Огня','Королева Огня','Король Огня','Туз Воздуха','Двойка Воздуха','Тройка Воздуха','Четверка Воздуха','Пятерка Воздуха','Шестерка Воздуха','Семерка Воздуха','Восьмерка Воздуха','Девятка Воздуха','Десятка Воздуха','Слуга Воздуха','Всадница Воздуха','Королева Воздуха','Король Воздуха','Туз Земли','Двойка Земли','Тройка Земли','Четверка Земли','Пятерка Земли','Шестерка Земли','Семерка Земли','Восьмерка Земли','Девятка Земли','Десятка Земли','Слуга Земли','Всадница Земли','Королева Земли','Король Земли','Туз Воды','Двойка Воды','Тройка Воды','Четверка Воды','Пятерка Воды','Шестерка Воды','Семерка Воды','Восьмерка Воды','Девятка Воды','Десятка Воды','Слуга Воды','Всадница Воды','Королева Воды','Король Воды']
-RUNES=['Альгиз','Ансуз','Беркана','Вуньо','Гебо','Дагаз','Ингуз','Иса','Йер','Кано','Лагуз','Манназ','Наутиз','Отал','Перт','Райдо','Соулу','Тейваз','Турисаз','Уруз','Феху','Хагалаз','Эваз','Эйваз']
-DECK_NAMES={'waite':'Таро Уэйта','manara':'Таро Манара','runes':'Руны'}
+DECK_NAMES={'waite':'Таро Уэйта','manara':'Таро Манара','day':'Карта дня'}
 
 def menu():
     return InlineKeyboardMarkup(inline_keyboard=[
       [InlineKeyboardButton(text='Таро Уэйта 🔮',callback_data='deck:waite'),InlineKeyboardButton(text='Таро Манара 🍓',callback_data='deck:manara')],
-      [InlineKeyboardButton(text='Руны 🪬',callback_data='deck:runes'),InlineKeyboardButton(text='Карта Дня 🧘🏼',callback_data='day')],
-      [InlineKeyboardButton(text='Расшифровка карт 🌙',callback_data='meaning')],
+      [InlineKeyboardButton(text='Карта дня 🧘🏼',callback_data='day')],
       [InlineKeyboardButton(text='Реферальная программа ❤️',callback_data='friend')],
       [InlineKeyboardButton(text='Оформить подписку 🌟',callback_data='pay')]])
 
@@ -48,7 +46,7 @@ def mini_url(deck,mode):
     return f'{bot_url()}/miniapp?deck={urllib.parse.quote(deck)}&mode={urllib.parse.quote(mode)}'
 
 def mini_button(deck,mode,text=None):
-    button_text=text or ('Получить руны' if deck=='runes' else 'Получить карты')
+    button_text=text or ('Получить карту дня' if deck=='day' else 'Получить карты')
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=button_text,web_app=WebAppInfo(url=mini_url(deck,mode)))]] )
 
 async def main_menu(m):
@@ -64,18 +62,18 @@ async def subscription(m):
     if p.is_file(): await m.answer_photo(FSInputFile(p),caption=text,reply_markup=pay_menu())
     else: await m.answer(text,reply_markup=pay_menu())
 
+async def day_start(m):
+    u=db.get(m.from_user.id)
+    if not u or int(u['requests'])+int(u['paid_requests'])<=0:
+        await m.answer('У вас осталось 0 запросов.')
+        await subscription(m)
+        return
+    db.set_pending(m.from_user.id,'day','free','Карта дня')
+    await m.answer('Начинаем гадание, переходим к карте дня. 🧘🏼',reply_markup=mini_button('day','free','Получить карту дня'))
+
 async def deck_start(m,deck):
     db.set_pending(m.from_user.id,deck,'free','')
     await m.answer(f'Давай погадаем на {DECK_NAMES[deck]}\n\nСформулируй свой вопрос и напиши его полностью ❤️\n\nНапример: Что ждет меня в следующем месяце?')
-
-async def day_start(m):
-    u=db.get(m.from_user.id); total=(int(u['requests'])+int(u['paid_requests'])) if u else 0
-    if total<=0:
-        await m.answer('У вас осталось 0 запросов.')
-        await subscription(m); return
-    mode='premium' if int(u['paid_requests'])>0 else 'free'
-    db.set_pending(m.from_user.id,'day',mode,'Карта дня')
-    await m.answer('Сегодняшняя карта уже ждёт тебя 🧘🏼\n\nПереходим к картам.',reply_markup=mini_button('day',mode))
 
 @router.message(CommandStart())
 async def start(m:types.Message):
@@ -102,16 +100,12 @@ async def friend_show(m):
 
 @router.message(Command('pay'))
 async def pay_cmd(m): await subscription(m)
-@router.message(Command('day'))
-async def day_cmd(m): await day_start(m)
 @router.message(Command('magic'))
 async def magic(m): await deck_start(m,'waite')
 @router.message(Command('manara'))
 async def manara(m): await deck_start(m,'manara')
-@router.message(Command('rune'))
-async def rune(m): await deck_start(m,'runes')
-@router.message(Command('taro'))
-async def taro(m): await meaning_start(m)
+@router.message(Command('day'))
+async def day_cmd(m): await day_start(m)
 
 @router.callback_query(F.data.startswith('deck:'))
 async def deck_cb(c):
@@ -130,30 +124,17 @@ async def day_cb(c):
     await c.answer()
     uid=c.from_user.id
     u=db.get(uid)
-    total=(int(u['requests'])+int(u['paid_requests'])) if u else 0
-    if total<=0:
+    if not u or int(u['requests'])+int(u['paid_requests'])<=0:
         await c.message.answer('У вас осталось 0 запросов.')
         await subscription(c.message)
         return
-    mode='premium' if int(u['paid_requests'])>0 else 'free'
-    db.set_pending(uid,'day',mode,'Карта дня')
-    await c.message.answer(
-        'Начинаем гадание, переходим к карте дня. 🧘🏼',
-        reply_markup=mini_button('day',mode,'Получить карту дня')
-    )
-@router.callback_query(F.data=='meaning')
-async def meaning_cb(c):
-    await c.answer()
-    db.set_pending(c.from_user.id,'meaning','meaning','')
-    await c.message.answer('Давай посмотрим значение любой карты, которая тебе интересна ✨\n\nПросто введи название одной карты\n\nНапример: Двойка мечей или Умеренность')
+    db.set_pending(uid,'day','free','Карта дня')
+    await c.message.answer('Начинаем гадание, переходим к карте дня. 🧘🏼',reply_markup=mini_button('day','free','Получить карту дня'))
+
 @router.callback_query(F.data=='friend')
 async def friend_cb(c): await c.answer(); await friend_show(c.message)
 @router.callback_query(F.data=='pay')
 async def pay_cb(c): await c.answer(); await subscription(c.message)
-
-async def meaning_start(m):
-    db.set_pending(m.from_user.id,'meaning','meaning','')
-    await m.answer('Давай посмотрим значение любой карты, которая тебе интересна ✨\n\nПросто введи название одной карты\n\nНапример: Двойка мечей или Умеренность')
 
 @router.callback_query(F.data=='ref:create')
 async def ref_create(c):
@@ -177,10 +158,6 @@ async def text_message(m):
         email=m.text.strip()
         if not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+',email): await m.answer('Пожалуйста, введи корректную почту.'); return
         await create_payment(m,int(p['mode']),email); db.clear_pending(m.from_user.id); return
-    if p['deck']=='meaning':
-        name=m.text.strip(); match=match_waite(name)
-        if not match: await m.answer('Не нашла такую карту Таро Уэйта. Введи название карты, например: Умеренность.'); return
-        await meaning_answer(m,match); db.clear_pending(m.from_user.id); db.set_pending(m.from_user.id,'meaning','meaning',''); return
     # question
     u=db.get(m.from_user.id); total=int(u['requests'])+int(u['paid_requests'])
     if total<=0:
@@ -190,10 +167,9 @@ async def text_message(m):
     deck=p['deck']; db.set_pending(m.from_user.id,deck,mode,m.text)
     db.event(m.from_user.id,'question',f'{deck}|{m.text[:500]}')
     await send_admin_question(m,deck,m.text)
-    if deck=='runes':
-        await m.answer('Начинаем гадание, переходим к рунам. 🪬',reply_markup=mini_button(deck,mode,'Получить руны'))
-    elif deck=='day':
-        await m.answer('Начинаем гадание, переходим к карте дня. 🧘🏼',reply_markup=mini_button(deck,mode,'Получить карту дня'))
+    if deck=='day':
+        db.set_pending(m.from_user.id,'day','free',m.text)
+        await m.answer('Начинаем гадание, переходим к карте дня. 🧘🏼',reply_markup=mini_button('day','free','Получить карту дня'))
     else:
         await m.answer('Начинаем гадание, переходим к картам.',reply_markup=mini_button(deck,mode,'Получить карты'))
 
@@ -246,79 +222,35 @@ async def miniapp(): return FileResponse(BASE/'web'/'index.html')
 
 @app.get('/api/miniapp/config')
 async def mini_config(deck:str='waite'):
-    if deck not in ('waite','manara','runes','day'):
+    if deck not in ('waite','manara','day'):
         raise HTTPException(400,'unknown deck')
-
-    names = WAITE if deck in ('waite','day') else MANARA if deck=='manara' else RUNES
-
-    # Для рун не привязываемся к конкретному названию файла.
-    # На сервере изображения могут называться по-разному (имя руны, 01.jpg и т.п.).
-    # Берём реальные файлы из папки и сопоставляем их с 24 рунами по порядку.
-    if deck == 'runes':
-        folder = BASE / 'Руны'
-        if not folder.is_dir():
-            # fallback for a differently cased folder name
-            for p in BASE.iterdir():
-                if p.is_dir() and p.name.strip().lower() == 'руны':
-                    folder = p
-                    break
-        files = sorted(
-            [p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in ('.jpg', '.jpeg', '.png', '.webp')]
-            if folder.is_dir() else [],
-            key=lambda p: p.name.casefold()
-        )
-        numeric = []
-        for p in files:
-            m = re.search(r'(?<!\d)(\d{1,3})(?!\d)', p.stem)
-            numeric.append((int(m.group(1)), p) if m else (None, p))
-        if files and all(n is not None for n, _ in numeric):
-            files = [p for _, p in sorted(numeric, key=lambda x: x[0])]
-        cards = []
-        for i, name in enumerate(names):
-            image = ''
-            if i < len(files):
-                image = '/cards/' + urllib.parse.quote(folder.name) + '/' + urllib.parse.quote(files[i].name)
-            cards.append({'id': i, 'name': name, 'image': image})
-        return {'deck': deck, 'cards': cards}
-
+    names = WAITE if deck in ('waite','day') else MANARA
     return {'deck':deck,'cards':[{'id':i,'name':n,'image':card_image(deck,i,n)} for i,n in enumerate(names)]}
 
 def card_image(deck,i,name):
-    if deck=='waite':
+    if deck in ('waite','day'):
+        # Карта дня использует отдельную папку, если она есть,
+        # иначе надежно берет изображения из колоды Уэйта.
+        day_folder=BASE/'Карта Дня'
+        if deck=='day' and day_folder.is_dir():
+            for filename in (f'{i:02d}.jpg',f'{i}.jpg'):
+                if (day_folder/filename).is_file():
+                    return '/cards/'+urllib.parse.quote(day_folder.name)+'/'+urllib.parse.quote(filename)
         folder=BASE/'Таро Уэйта'; filename=f'{i:02d}.jpg'
-        if (folder/filename).is_file(): return '/cards/'+urllib.parse.quote(folder.name)+'/'+urllib.parse.quote(filename)
+        if (folder/filename).is_file():
+            return '/cards/'+urllib.parse.quote(folder.name)+'/'+urllib.parse.quote(filename)
         return ''
-    if deck=='day':
-        # Карта Дня использует те же 78 изображений Уэйта, которые лежат в отдельной папке.
-        folder=BASE/'Карта Дня'; filename=f'{i:02d}.jpg'
-        if (folder/filename).is_file(): return '/cards/'+urllib.parse.quote(folder.name)+'/'+urllib.parse.quote(filename)
-        # Если на сервере папка Карта Дня отсутствует, используем оригинальные карты Уэйта.
-        fallback=BASE/'Таро Уэйта'/filename
-        if fallback.is_file(): return '/cards/'+urllib.parse.quote('Таро Уэйта')+'/'+urllib.parse.quote(filename)
-        return ''
-    if deck=='manara':
-        if i < 22: filename=f'{i}.jpg'
+    if deck == 'manara':
+        if i < 22:
+            filename=f'{i}.jpg'
         else:
             prefix={22:'ж',36:'ч',50:'м',64:'п'}[22+14*((i-22)//14)]
             number=(i-22)%14+1
             filename=f'{prefix}{number}.jpg'
         folder=BASE/'Таро Манара'
-        if (folder/filename).is_file(): return '/cards/'+urllib.parse.quote(folder.name)+'/'+urllib.parse.quote(filename)
+        if (folder/filename).is_file():
+            return '/cards/'+urllib.parse.quote(folder.name)+'/'+urllib.parse.quote(filename)
         return ''
-    if deck=='runes':
-        folder=BASE/'Руны'
-        if not folder.is_dir():
-            for p in BASE.iterdir():
-                if p.is_dir() and p.name.strip().lower()=='руны':
-                    folder=p; break
-        files=sorted([p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in ('.jpg','.jpeg','.png','.webp')] if folder.is_dir() else [], key=lambda p:p.name.casefold())
-        numeric=[]
-        for p in files:
-            m=re.search(r'(?<!\d)(\d{1,3})(?!\d)',p.stem)
-            numeric.append((int(m.group(1)),p) if m else (None,p))
-        if files and all(n is not None for n,_ in numeric): files=[p for _,p in sorted(numeric,key=lambda x:x[0])]
-        if 0 <= i < len(files): return '/cards/'+urllib.parse.quote(folder.name)+'/'+urllib.parse.quote(files[i].name)
-    return ''
     return ''
 
 def validate_init_data(init_data):
@@ -334,87 +266,66 @@ def validate_init_data(init_data):
     except Exception: return None
 
 async def process_reading(uid, deck, mode, cards, question, premium):
-    names = [str(x.get('name','')) if isinstance(x,dict) else str(x) for x in cards]
+    names=[str(x.get('name','')) if isinstance(x,dict) else str(x) for x in cards]
     try:
-        print(f'[READING] user_id={uid} deck={deck} question={question["question"]!r} selected_cards={names!r}')
-        answer = await ask(
-            deck,
-            question['question'],
-            cards,
-            paid=premium,
-            day=(deck == 'day')
+        print(f'[READING] START uid={uid} deck={deck} mode={mode} question={question["question"]!r} cards={names!r}', flush=True)
+        answer=await asyncio.wait_for(
+            ask(deck, question['question'], [{'name': n} for n in names], paid=premium, day=(deck=='day')),
+            timeout=130
         )
-        db.reading(
-            uid, deck, mode, question['question'],
-            json.dumps(names, ensure_ascii=False), answer
-        )
-        user_now = db.get(uid)
-        left = db.balance(uid) + int(user_now['paid_requests']) if user_now else 0
-
-        await bot.send_message(uid, answer)
-
-        # Следующий текст клиента становится новым вопросом этой же колоды.
-        db.set_pending(uid, deck, mode, '')
-        await bot.send_message(
-            uid,
-            f'Ваше количество запросов: {left}\n\n'
-            'Задайте свой вопрос ❤️'
-        )
-        print(f'[READING] done user_id={uid} left={left}')
+        if not answer or not str(answer).strip():
+            raise RuntimeError('CHAD API вернул пустой ответ')
+        answer=str(answer).strip()
+        db.reading(uid,deck,mode,question['question'],json.dumps(names,ensure_ascii=False),answer)
+        db.clear_pending(uid)
+        user_now=db.get(uid)
+        left=(db.balance(uid) + int(user_now['paid_requests'])) if user_now else 0
+        await bot.send_message(uid,answer)
+        await bot.send_message(uid,f'Ваше количество запросов: {left}\n\nЗадайте свой вопрос ❤️')
+        print(f'[READING] DONE uid={uid} left={left}', flush=True)
     except Exception as e:
-        # Запрос был списан перед запуском чтения — при ошибке возвращаем его.
+        print(f'[READING] ERROR uid={uid}: {type(e).__name__}: {e}', flush=True)
         try:
-            db.add(uid, 1)
+            db.add(uid,1)
             db.clear_pending(uid)
-            await bot.send_message(
-                uid,
-                'Не удалось получить расшифровку прямо сейчас. '
-                'Запрос возвращён на баланс. Попробуйте ещё раз немного позже.'
-            )
+            await bot.send_message(uid,'Не удалось получить расшифровку прямо сейчас. Запрос возвращён на баланс. Попробуйте ещё раз немного позже.')
         except Exception as inner:
-            print(f'[READING] recovery error user_id={uid}: {inner}')
-        print(f'[READING] Ошибка для user_id={uid}: {e!r}')
-
+            print(f'[READING] RECOVERY ERROR uid={uid}: {type(inner).__name__}: {inner}', flush=True)
 
 @app.post('/api/miniapp/select')
 async def mini_select(request:Request):
-    body = await request.json()
-    tg = validate_init_data(body.get('initData',''))
-    if not tg:
-        raise HTTPException(403,'Недействительный Telegram initData')
-
-    uid = int(tg['id'])
-    user = db.get(uid)
-    if not user:
-        raise HTTPException(404,'Пользователь не найден')
-
-    deck = body.get('deck')
-    mode = body.get('mode','free')
-    cards = body.get('cards',[])
-    question = db.get_pending(uid)
-
-    expected = 1 if deck == 'day' else (9 if mode == 'premium' else 3)
-    if deck not in ('waite','manara','runes','day') or len(cards) != expected:
-        raise HTTPException(400,'Неверное количество карт')
-
-    names = [str(x.get('name','')) if isinstance(x,dict) else str(x) for x in cards]
-    allowed = WAITE if deck in ('waite','day') else MANARA if deck=='manara' else RUNES
-    if any(n not in allowed for n in names):
-        raise HTTPException(400,'Недопустимая карта')
-
-    premium = (mode == 'premium' and deck != 'meaning')
-    if not db.consume(uid, premium=premium):
-        raise HTTPException(409,'Нет доступных запросов')
-
-    if not question or question['deck'] != deck:
-        db.add(uid,1)
-        raise HTTPException(409,'Вопрос не найден')
-
-    # Сначала подтверждаем клиенту, что выбор принят, и только затем запускаем CHAD в фоне.
-    # Эндпоинт НЕ ждёт ответа ИИ, поэтому Mini App может безопасно закрыться после ответа 200.
-    await bot.send_message(uid,'Отправляем ваш запрос во Вселенную... Подождите...')
-    asyncio.create_task(process_reading(uid, deck, mode, cards, question, premium))
-    return {'ok':True,'accepted':True}
+    try:
+        body=await request.json()
+        tg=validate_init_data(body.get('initData',''))
+        if not tg: raise HTTPException(403,'Недействительный Telegram initData')
+        uid=int(tg['id'])
+        user=db.get(uid)
+        if not user: raise HTTPException(404,'Пользователь не найден')
+        deck=body.get('deck')
+        mode=body.get('mode','free')
+        cards=body.get('cards',[])
+        question=db.get_pending(uid)
+        expected=1 if deck=='day' else (9 if mode=='premium' else 3)
+        if deck not in ('waite','manara','day') or len(cards)!=expected:
+            raise HTTPException(400,'Неверное количество карт')
+        names=[str(x.get('name','')) if isinstance(x,dict) else str(x) for x in cards]
+        allowed=WAITE if deck in ('waite','day') else MANARA
+        if any(n not in allowed for n in names):
+            raise HTTPException(400,'Недопустимая карта')
+        premium=(mode=='premium' and deck!='day')
+        if not question or question['deck']!=deck or not question['question'] or (deck=='day' and mode!='free'):
+            raise HTTPException(409,'Вопрос не найден')
+        if not db.consume(uid,premium=premium):
+            raise HTTPException(409,'Нет доступных запросов')
+        print(f'[MINI] ACCEPT uid={uid} deck={deck} mode={mode} cards={names!r}', flush=True)
+        await bot.send_message(uid,'Отправляем ваш запрос во Вселенную... Подождите...')
+        await process_reading(uid,deck,mode,[{'name':n} for n in names],question,premium)
+        return {'ok':True,'accepted':True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f'[MINI] ERROR: {type(e).__name__}: {e}', flush=True)
+        raise HTTPException(500,'Ошибка обработки расклада')
 
 @app.post('/yookassa/webhook')
 async def yookassa_webhook(request:Request):
