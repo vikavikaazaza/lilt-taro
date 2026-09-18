@@ -11,164 +11,129 @@ CSV_FILE = BASE / "export.csv"
 def now():
     return datetime.now(timezone.utc).isoformat()
 
-def clean(s):
-    return (s or "").replace("\ufeff", "").strip()
+def clean(v):
+    return (v or "").replace("\ufeff", "").strip()
 
-def read_csv_rows():
-    # Try several common encodings. csv.DictReader is used after normalizing
-    # the header names, so harmless BOM/whitespace differences do not matter.
-    encodings = ["utf-8-sig", "utf-8", "cp1251"]
-    last_error = None
+def parse_csv():
+    # The Sambot export has a fixed 6-column order:
+    # ID, Имя, Фамилия, @username, first message date, last message date.
+    # We deliberately use column positions instead of relying on Cyrillic
+    # header decoding, because some CSV exports contain mixed/invalid bytes.
+    raw = CSV_FILE.read_bytes()
+
+    encodings = ["utf-8-sig", "utf-8", "cp1251", "cp1252", "latin-1"]
+    text = None
+    used = None
 
     for enc in encodings:
         try:
-            with open(CSV_FILE, "r", encoding=enc, newline="") as f:
-                sample = f.read(8192)
-                f.seek(0)
+            text = raw.decode(enc)
+            used = enc
+            break
+        except UnicodeDecodeError:
+            continue
 
-                # Detect comma/semicolon/tab automatically.
-                try:
-                    dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
-                except csv.Error:
-                    dialect = csv.excel
-                    dialect.delimiter = ","
+    if text is None:
+        text = raw.decode("utf-8", errors="replace")
+        used = "utf-8 (errors=replace)"
 
-                reader = csv.DictReader(f, dialect=dialect)
+    try:
+        dialect = csv.Sniffer().sniff(text[:10000], delimiters=",;\t")
+        delimiter = dialect.delimiter
+    except csv.Error:
+        delimiter = ","
 
-                raw_fields = reader.fieldnames or []
-                fields = [clean(x) for x in raw_fields]
+    rows = list(csv.reader(text.splitlines(), delimiter=delimiter))
 
-                if len(fields) >= 4:
-                    rows = []
-                    for row in reader:
-                        normalized = {}
-                        for key, value in row.items():
-                            normalized[clean(key)] = clean(value)
-                        rows.append(normalized)
-                    return fields, rows, enc
+    if not rows:
+        raise SystemExit("CSV пустой.")
 
-        except (UnicodeDecodeError, UnicodeError) as e:
-            last_error = e
+    # Find the first row that looks like the header.
+    header_index = 0
+    for i, row in enumerate(rows[:10]):
+        if len(row) >= 4:
+            first = clean(row[0]).lower()
+            if first in ("id", "telegram id", "telegram_id", "user_id") or first.isdigit() is False:
+                header_index = i
+                break
 
-    raise RuntimeError(f"Не удалось прочитать CSV: {last_error}")
+    data_rows = rows[header_index + 1:]
 
-def find_col(fields, candidates):
-    lower = {clean(x).lower(): x for x in fields}
-    for candidate in candidates:
-        if candidate.lower() in lower:
-            return lower[candidate.lower()]
-    return None
+    print(f"[CSV] Кодировка: {used}")
+    print(f"[CSV] Разделитель: {repr(delimiter)}")
+    print(f"[CSV] Заголовок: {rows[header_index]}")
+    print(f"[CSV] Строк данных: {len(data_rows)}")
 
-def normalize_username(value):
-    value = clean(value)
-    if value.startswith("@"):
-        value = value[1:]
-    return value or None
+    return data_rows
 
-def normalize_name(first_name, last_name):
-    first_name = clean(first_name)
-    last_name = clean(last_name)
-    result = " ".join(x for x in (first_name, last_name) if x)
+def normalize_username(v):
+    v = clean(v)
+    return v[1:] if v.startswith("@") else (v or None)
+
+def normalize_name(first, last):
+    result = " ".join(x for x in (clean(first), clean(last)) if x)
     return result or "Пользователь"
 
-def normalize_date(value):
-    value = clean(value)
-    if not value:
-        return now()
-    # Keep the source value if it is a valid ISO date/time.
-    try:
-        datetime.fromisoformat(value)
-        return value
-    except ValueError:
-        return now()
+def normalize_date(v):
+    v = clean(v)
+    return v or now()
 
 def main():
     if not DB.exists():
         raise SystemExit(f"База не найдена: {DB}")
     if not CSV_FILE.exists():
-        raise SystemExit(f"Файл {CSV_FILE.name} не найден рядом со скриптом.")
+        raise SystemExit("export.csv не найден рядом с import_sambot.py")
 
-    fields, rows, encoding = read_csv_rows()
+    rows = parse_csv()
 
-    id_col = find_col(fields, ["ID", "id", "Telegram ID", "telegram_id", "user_id"])
-    first_col = find_col(fields, ["Имя", "First Name", "first_name", "Name", "name"])
-    last_col = find_col(fields, ["Фамилия", "Last Name", "last_name", "Surname", "surname"])
-    username_col = find_col(fields, ["@username", "username", "Username", "Telegram Username"])
-    first_seen_col = find_col(fields, [
-        "Дата первого сообщения", "First message date",
-        "first_message_date", "First seen", "first_seen"
-    ])
-    last_seen_col = find_col(fields, [
-        "Дата последнего сообщения", "Last message date",
-        "last_message_date", "Last seen", "last_seen"
-    ])
-
-    missing = []
-    if not id_col: missing.append("ID")
-    if not first_col: missing.append("Имя")
-    if not last_col: missing.append("Фамилия")
-    if not username_col: missing.append("@username")
-    if not first_seen_col: missing.append("Дата первого сообщения")
-    if not last_seen_col: missing.append("Дата последнего сообщения")
-
-    print(f"[CSV] Кодировка: {encoding}")
-    print(f"[CSV] Разделитель распознан автоматически")
-    print(f"[CSV] Колонки: {fields}")
-    print(f"[CSV] Строк найдено: {len(rows)}")
-
-    if missing:
-        raise SystemExit(
-            "Не удалось определить обязательные колонки: "
-            + ", ".join(missing)
-            + "\nВерхняя строка файла должна содержать ID, Имя, Фамилия, @username "
-              "и даты первого/последнего сообщения."
-        )
-
-    # Validate all IDs BEFORE touching the database.
     valid = []
-    bad = []
-    seen_ids = set()
+    bad = 0
+    seen = set()
 
-    for line_no, row in enumerate(rows, start=2):
-        raw_id = clean(row.get(id_col))
+    for row in rows:
+        if len(row) < 6:
+            bad += 1
+            continue
+
         try:
-            uid = int(raw_id)
+            uid = int(clean(row[0]))
             if uid <= 0:
                 raise ValueError
         except ValueError:
-            bad.append((line_no, raw_id))
+            # Ignore empty/summary/footer rows.
+            bad += 1
             continue
 
-        if uid in seen_ids:
+        if uid in seen:
             continue
-        seen_ids.add(uid)
+        seen.add(uid)
 
         valid.append((
             uid,
-            normalize_username(row.get(username_col)),
-            normalize_name(row.get(first_col), row.get(last_col)),
-            normalize_date(row.get(first_seen_col)),
-            normalize_date(row.get(last_seen_col)),
+            normalize_username(row[3]),
+            normalize_name(row[1], row[2]),
+            normalize_date(row[4]),
+            normalize_date(row[5]),
         ))
 
     print(f"[CSV] Корректных пользователей: {len(valid)}")
-    print(f"[CSV] Некорректных ID: {len(bad)}")
+    print(f"[CSV] Пропущено строк: {bad}")
 
     if not valid:
-        raise SystemExit("Нет ни одного корректного Telegram ID. Импорт отменён.")
+        raise SystemExit("Не найдено ни одного корректного Telegram ID. Импорт отменён.")
 
-    # Backup ONLY after the CSV has passed validation.
+    # Backup only after CSV validation.
     backup = DB.with_name(
         f"bot.sqlite3.backup_before_sambot_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     )
     shutil.copy2(DB, backup)
-    print(f"[BACKUP] Создана копия: {backup.name}")
+    print(f"[BACKUP] {backup.name}")
 
     inserted = 0
     updated = 0
 
     with sqlite3.connect(DB, timeout=30) as c:
-        c.execute("PRAGMA journal_mode=WAL")
+        c.execute("PRAGMA foreign_keys=ON")
         c.execute("BEGIN")
 
         for uid, username, name, first_seen, last_seen in valid:
@@ -177,7 +142,7 @@ def main():
             ).fetchone()
 
             if existing:
-                # Do not touch balances, payments, total_spent or history.
+                # Existing balance/payment/history is preserved.
                 c.execute(
                     """
                     UPDATE users
@@ -204,8 +169,7 @@ def main():
                 )
                 updated += 1
             else:
-                # Sambot users are imported with ZERO requests.
-                # free_granted=0 prevents the normal first-registration free request.
+                # Imported Sambot users get zero requests.
                 c.execute(
                     """
                     INSERT INTO users(
@@ -234,11 +198,11 @@ def main():
 
     print()
     print("=== ИМПОРТ ЗАВЕРШЁН ===")
-    print(f"Пользователей в CSV:        {len(rows)}")
-    print(f"Новых добавлено:            {inserted}")
-    print(f"Существующих обновлено:     {updated}")
-    print(f"Некорректных ID:             {len(bad)}")
-    print(f"Резервная копия:             {backup.name}")
+    print(f"Пользователей в CSV:    {len(rows)}")
+    print(f"Новых добавлено:        {inserted}")
+    print(f"Обновлено существующих: {updated}")
+    print(f"Пропущено строк:        {bad}")
+    print(f"Резервная копия:        {backup.name}")
     print()
     print("Импортированные пользователи получили 0 запросов.")
     print("Баланс, оплаты и история существующих пользователей не изменены.")
