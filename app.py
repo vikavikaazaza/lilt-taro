@@ -88,7 +88,7 @@ async def day_start(m):
         await subscription(m)
         return
     db.set_pending(m.from_user.id,'day','free','Карта дня')
-    await m.answer('Начинаем гадание, переходим к карте дня. 🧘🏼',reply_markup=mini_button('day','free','Получить карту дня'))
+    await m.answer('Сейчас карты покажут, на что стоит обратить внимание сегодня 🧘🏼',reply_markup=mini_button('day','free','Получить карту дня'))
 
 async def deck_start(m,deck):
     mode='premium' if premium_access(m.from_user.id) else 'free'
@@ -107,7 +107,7 @@ async def start(m:types.Message):
             source='instagram'
         db.user(m.from_user,source,referrer)
         if referrer:
-            db.add(referrer,1); db.event(referrer,'referral_success',str(m.from_user.id)); await bot.send_message(referrer,'❤️ Вам начислен 1 бесплатный запрос за нового друга!')
+            db.add(referrer,1); db.event(referrer,'referral_success',str(m.from_user.id)); await bot.send_message(referrer,'Вам начислен 1 бесплатный запрос за нового друга!❤️')
     else:
         db.user(m.from_user,existing['source'] or 'telegram',existing['referrer_id'])
     db.event(m.from_user.id,'start',source if not existing else 'return')
@@ -150,7 +150,7 @@ async def day_cb(c):
         await subscription(c.message)
         return
     db.set_pending(uid,'day','free','Карта дня')
-    await c.message.answer('Начинаем гадание, переходим к карте дня. 🧘🏼',reply_markup=mini_button('day','free','Получить карту дня'))
+    await c.message.answer('Сейчас карты покажут, на что стоит обратить внимание сегодня 🧘🏼',reply_markup=mini_button('day','free','Получить карту дня'))
 
 @router.callback_query(F.data=='friend')
 async def friend_cb(c): await c.answer(); await friend_show(c.message)
@@ -190,9 +190,9 @@ async def text_message(m):
     await send_admin_question(m,deck,m.text)
     if deck=='day':
         db.set_pending(m.from_user.id,'day','free',m.text)
-        await m.answer('Начинаем гадание, переходим к карте дня. 🧘🏼',reply_markup=mini_button('day','free','Получить карту дня'))
+        await m.answer('Сейчас карты покажут, на что стоит обратить внимание сегодня 🧘🏼',reply_markup=mini_button('day','free','Получить карту дня'))
     else:
-        await m.answer('Начинаем гадание, переходим к картам.',reply_markup=mini_button(deck,mode,'Получить карты'))
+        await m.answer('Твой вопрос услышан. Сейчас карты покажут то, что важно увидеть именно тебе 🌙',reply_markup=mini_button(deck,mode,'Получить карты'))
 
 def match_waite(q):
     norm=' '.join(q.lower().replace('ё','е').split())
