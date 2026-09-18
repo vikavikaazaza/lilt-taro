@@ -17,6 +17,25 @@ BASE=Path(__file__).resolve().parent
 router=Router()
 bot: Bot
 
+
+def has_manual_subscription(uid):
+    try:
+        return bool(db.manual_subscription(uid))
+    except Exception as e:
+        print(f'[SUBSCRIPTION] read error uid={uid}: {e}', flush=True)
+        return False
+
+def premium_access(uid):
+    u=db.get(uid)
+    return bool(u and (int(u['paid_requests']) > 0 or has_manual_subscription(uid)))
+
+def consume_request(uid, premium=False):
+    # For a manually granted subscription, free/referral requests can also be
+    # used for 9-card readings. Paid requests are still consumed first.
+    if premium:
+        return bool(db.consume(uid, premium=True))
+    return bool(db.consume(uid, premium=False))
+
 WAITE=[
 'Шут','Маг','Верховная Жрица','Императрица','Император','Иерофант','Влюблённые','Колесница','Сила','Отшельник','Колесо Фортуны','Справедливость','Повешенный','Смерть','Умеренность','Дьявол','Башня','Звезда','Луна','Солнце','Суд','Мир',
 'Туз Жезлов','Двойка Жезлов','Тройка Жезлов','Четвёрка Жезлов','Пятёрка Жезлов','Шестёрка Жезлов','Семёрка Жезлов','Восьмёрка Жезлов','Девятка Жезлов','Десятка Жезлов','Паж Жезлов','Рыцарь Жезлов','Королева Жезлов','Король Жезлов',
@@ -72,7 +91,8 @@ async def day_start(m):
     await m.answer('Начинаем гадание, переходим к карте дня. 🧘🏼',reply_markup=mini_button('day','free','Получить карту дня'))
 
 async def deck_start(m,deck):
-    db.set_pending(m.from_user.id,deck,'free','')
+    mode='premium' if premium_access(m.from_user.id) else 'free'
+    db.set_pending(m.from_user.id,deck,mode,'')
     await m.answer(f'Давай погадаем на {DECK_NAMES[deck]}\n\nСформулируй свой вопрос и напиши его полностью ❤️\n\nНапример: Что ждет меня в следующем месяце?')
 
 @router.message(CommandStart())
@@ -112,7 +132,8 @@ async def deck_cb(c):
     await c.answer()
     uid=c.from_user.id
     deck=c.data.split(':',1)[1]
-    db.set_pending(uid,deck,'free','')
+    mode='premium' if premium_access(uid) else 'free'
+    db.set_pending(uid,deck,mode,'')
     await c.message.answer(
         f'Давай погадаем на {DECK_NAMES[deck]}\n\n'
         'Сформулируй свой вопрос и напиши его полностью ❤️\n\n'
@@ -163,7 +184,7 @@ async def text_message(m):
     if total<=0:
         await m.answer('У вас осталось 0 запросов.')
         await subscription(m); return
-    mode='premium' if int(u['paid_requests'])>0 else 'free'
+    mode='premium' if premium_access(m.from_user.id) else 'free'
     deck=p['deck']; db.set_pending(m.from_user.id,deck,mode,m.text)
     db.event(m.from_user.id,'question',f'{deck}|{m.text[:500]}')
     await send_admin_question(m,deck,m.text)
@@ -280,6 +301,10 @@ async def process_reading(uid, deck, mode, cards, question, premium):
         db.clear_pending(uid)
         user_now=db.get(uid)
         left=(db.balance(uid) + int(user_now['paid_requests'])) if user_now else 0
+        # Keep the bot in question-entry mode so the very next text message
+        # starts another reading without requiring the user to press a deck button again.
+        next_mode='premium' if premium_access(uid) and deck!='day' else 'free'
+        db.set_pending(uid,deck,next_mode,'')
         await bot.send_message(uid,answer)
         await bot.send_message(uid,f'Ваше количество запросов: {left}\n\nЗадайте свой вопрос ❤️')
         print(f'[READING] DONE uid={uid} left={left}', flush=True)
@@ -302,9 +327,12 @@ async def mini_select(request:Request):
         user=db.get(uid)
         if not user: raise HTTPException(404,'Пользователь не найден')
         deck=body.get('deck')
-        mode=body.get('mode','free')
         cards=body.get('cards',[])
         question=db.get_pending(uid)
+        if not question or question['deck']!=deck or not question['question']:
+            raise HTTPException(409,'Вопрос не найден')
+        mode='premium' if (premium_access(uid) and deck!='day') else 'free'
+        # Never trust the Mini App's mode for access control; the server decides.
         expected=1 if deck=='day' else (9 if mode=='premium' else 3)
         if deck not in ('waite','manara','day') or len(cards)!=expected:
             raise HTTPException(400,'Неверное количество карт')
@@ -313,9 +341,7 @@ async def mini_select(request:Request):
         if any(n not in allowed for n in names):
             raise HTTPException(400,'Недопустимая карта')
         premium=(mode=='premium' and deck!='day')
-        if not question or question['deck']!=deck or not question['question'] or (deck=='day' and mode!='free'):
-            raise HTTPException(409,'Вопрос не найден')
-        if not db.consume(uid,premium=premium):
+        if not consume_request(uid,premium=premium):
             raise HTTPException(409,'Нет доступных запросов')
         print(f'[MINI] ACCEPT uid={uid} deck={deck} mode={mode} cards={names!r}', flush=True)
         await bot.send_message(uid,'Отправляем ваш запрос во Вселенную... Подождите...')
@@ -353,7 +379,7 @@ def auth_ok(request:Request):
 
 def admin_page():
     s=db.stats(); us=db.users(); tops=db.top_payers(); src=db.source_stats(); reads=db.recent_readings(); pays=db.recent_payments()
-    rows=''.join(f'<tr><td>{u["id"]}</td><td>{html.escape(u["name"] or "")}</td><td>@{html.escape(u["username"] or "—")}</td><td>{int(u["requests"])+int(u["paid_requests"])}</td><td>{int(u["requests"])}</td><td>{int(u["paid_requests"])}</td><td>{html.escape(u["source"] or "telegram")}</td><td>{html.escape(u["last_seen"] or "")}</td></tr>' for u in us)
+    rows=''.join(f'<tr><td>{u["id"]}</td><td>{html.escape(u["name"] or "")}</td><td>@{html.escape(u["username"] or "—")}</td><td>{int(u["requests"])+int(u["paid_requests"])}</td><td>{int(u["requests"])}</td><td>{int(u["paid_requests"])}</td><td>{"ВКЛ" if has_manual_subscription(u["id"]) else "—"}</td><td>{html.escape(u["source"] or "telegram")}</td><td>{html.escape(u["last_seen"] or "")}</td></tr>' for u in us)
     top=''.join(f'<tr><td>{html.escape(x["name"] or "")}</td><td>@{html.escape(x["username"] or "—")}</td><td>{x["total_spent"]} ₽</td></tr>' for x in tops)
     sources=''.join(f'<span class="pill">{html.escape(x["source"])}: {x["n"]}</span>' for x in src)
     rrows=''.join(f'<tr><td>{r["created_at"][:19].replace("T"," ")}</td><td>{html.escape(r["name"] or str(r["user_id"]))}</td><td>{html.escape(DECK_NAMES.get(r["deck"],r["deck"]))}</td><td>{html.escape(r["question"][:120])}</td></tr>' for r in reads)
@@ -361,12 +387,13 @@ def admin_page():
     return f'''<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Lilit Admin</title><style>
 body{{margin:0;background:#090816;color:#f5e9c8;font:14px Arial,sans-serif}}.wrap{{max-width:1250px;margin:auto;padding:28px}}h1{{font-weight:500;letter-spacing:1px}}h2{{font-weight:500}}.grid{{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}}.card,section{{background:#15132a;border:1px solid #302a52;border-radius:16px;padding:18px;box-shadow:0 10px 30px #0003}}.num{{font-size:28px;margin-top:8px}}table{{width:100%;border-collapse:collapse;min-width:760px}}.scroll{{overflow:auto}}td,th{{padding:10px;border-bottom:1px solid #292440;text-align:left;white-space:nowrap}}input,textarea,button{{padding:10px;border-radius:9px;border:1px solid #4b416e;background:#0d0c1c;color:#fff}}textarea{{width:100%;min-height:100px}}button{{cursor:pointer;background:#d7bb73;color:#171225;font-weight:bold}}.pill{{display:inline-block;padding:8px 12px;border:1px solid #4b416e;border-radius:999px;margin:4px}}form.row{{display:flex;gap:10px;flex-wrap:wrap}}.muted{{color:#aaa2bc}}</style></head><body><div class="wrap"><h1>Лилит · Панель управления</h1><p class="muted">Один сервер · одна база SQLite · бот + Mini App + платежи</p><div class="grid"><div class="card">Пользователи<div class="num">{s['users']}</div></div><div class="card">Активные 7 дней<div class="num">{s['active']}</div></div><div class="card">Расклады<div class="num">{s['questions']}</div></div><div class="card">Платежи<div class="num">{s['payments']}</div></div><div class="card">Выручка<div class="num">{s['revenue']} ₽</div></div></div><br>
 <section><h2>Начислить запросы</h2><form class="row" method="post" action="/admin/add-requests"><input name="uid" placeholder="Telegram ID" required><input name="amount" type="number" min="1" placeholder="Количество" required><button>Начислить</button></form></section><br>
+<section><h2>Ручная подписка</h2><p class="muted">Включает человеку режим расклада на 9 карт. Оплата не требуется. Запросы при этом расходуются как обычно.</p><form class="row" method="post" action="/admin/set-subscription"><input name="uid" placeholder="Telegram ID" required><button name="enabled" value="1">Включить подписку</button><button name="enabled" value="0">Отключить подписку</button></form></section><br>
 <section><h2>Рассылка</h2><form method="post" action="/admin/broadcast"><textarea name="text" placeholder="Текст сообщения" required></textarea><br><br><button>Отправить всем пользователям</button></form></section><br>
 <section><h2>Источники</h2>{sources}</section><br>
 <section><h2>Последние вопросы</h2><div class="scroll"><table><tr><th>Дата</th><th>Клиент</th><th>Колода</th><th>Вопрос</th></tr>{rrows}</table></div></section><br>
 <section><h2>Платежи</h2><div class="scroll"><table><tr><th>Дата</th><th>Клиент</th><th>Сумма</th><th>Запросы</th><th>Статус</th></tr>{prows}</table></div></section><br>
 <section><h2>Клиенты с оплатами</h2><div class="scroll"><table><tr><th>Имя</th><th>Ник</th><th>Всего</th></tr>{top}</table></div></section><br>
-<section><h2>Пользователи</h2><div class="scroll"><table><tr><th>ID</th><th>Имя</th><th>Ник</th><th>Всего</th><th>Бесплатные</th><th>Оплаченные</th><th>Источник</th><th>Последний вход</th></tr>{rows}</table></div></section></div></body></html>'''
+<section><h2>Пользователи</h2><div class="scroll"><table><tr><th>ID</th><th>Имя</th><th>Ник</th><th>Всего</th><th>Бесплатные</th><th>Оплаченные</th><th>Ручная подписка</th><th>Источник</th><th>Последний вход</th></tr>{rows}</table></div></section></div></body></html>'''
 
 @app.get('/admin',response_class=HTMLResponse)
 async def admin(request:Request):
@@ -379,6 +406,22 @@ async def admin_add(request:Request):
     form=await request.form(); uid=int(form['uid']); amount=int(form['amount']);
     if not db.get(uid): raise HTTPException(404,'Пользователь не найден')
     db.add(uid,amount); db.event(uid,'admin_add',str(amount)); return HTMLResponse('<meta http-equiv="refresh" content="0;url=/admin">')
+
+@app.post('/admin/set-subscription')
+async def admin_set_subscription(request:Request):
+    if not auth_ok(request): raise HTTPException(401,'Unauthorized')
+    form=await request.form()
+    raw_uid=str(form.get('uid','')).strip()
+    raw_enabled=str(form.get('enabled','1')).strip()
+    if not raw_uid.isdigit():
+        raise HTTPException(400,'Telegram ID должен содержать только цифры')
+    uid=int(raw_uid)
+    if not db.get(uid):
+        raise HTTPException(404,'Пользователь не найден')
+    enabled=raw_enabled=='1'
+    db.set_manual_subscription(uid,enabled)
+    db.event(uid,'admin_subscription', 'enabled' if enabled else 'disabled')
+    return HTMLResponse('<meta http-equiv="refresh" content="0;url=/admin">')
 
 @app.post('/admin/broadcast')
 async def broadcast(request:Request):
