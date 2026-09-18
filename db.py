@@ -39,6 +39,9 @@ def init():
         CREATE TABLE IF NOT EXISTS refs(
           code TEXT PRIMARY KEY, referrer_id INTEGER NOT NULL, used_by INTEGER UNIQUE, created_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS manual_subscriptions(
+          user_id INTEGER PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 1, granted_at TEXT NOT NULL
+        );
         ''')
         # Upgrade older databases safely.
         cols={r['name'] for r in c.execute('PRAGMA table_info(users)').fetchall()}
@@ -61,6 +64,18 @@ def user(tg_user, source='telegram', referrer_id=None):
 
 def get(uid):
     with conn() as c: return c.execute('SELECT * FROM users WHERE id=?',(uid,)).fetchone()
+
+def manual_subscription(uid):
+    with conn() as c:
+        row=c.execute('SELECT enabled FROM manual_subscriptions WHERE user_id=?',(uid,)).fetchone()
+        return bool(row and int(row['enabled']))
+
+def set_manual_subscription(uid, enabled=True):
+    with conn() as c:
+        if enabled:
+            c.execute('INSERT INTO manual_subscriptions(user_id,enabled,granted_at) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET enabled=1,granted_at=excluded.granted_at',(uid,1,now()))
+        else:
+            c.execute('UPDATE manual_subscriptions SET enabled=0,granted_at=? WHERE user_id=?',(now(),uid))
 
 def touch(uid):
     with conn() as c: c.execute('UPDATE users SET last_seen=? WHERE id=?',(now(),uid))
