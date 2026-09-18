@@ -7,18 +7,22 @@ const tg=window.Telegram?.WebApp;if(tg){tg.ready();tg.expand();}
 const p=new URLSearchParams(location.search),deck=p.get('deck')||'waite',mode=p.get('mode')==='premium'?'premium':'free';
 const max=deck==='day'?1:(mode==='premium'?9:3),grid=document.getElementById('grid'),counter=document.getElementById('counter');
 let submitting=false;
-async function submitAndClose(cards){
+function submitAndClose(cards){
  if(submitting)return; submitting=true;
  counter.textContent='Карты выбраны ✨';
- const payload={initData:tg?.initData||'',deck,mode,cards};
+ const payload=JSON.stringify({initData:tg?.initData||'',deck,mode,cards});
+ let sent=false;
  try{
-   const r=await fetch('/api/miniapp/select',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),keepalive:true});
-   if(!r.ok){let msg='Ошибка отправки';try{const d=await r.json();msg=d.detail||msg}catch(e){} throw new Error(msg);}
-   // Сервер уже принял выбор и запустил расшифровку в фоне. Даем клиенту увидеть последний переворот.
-   setTimeout(()=>{try{tg?.close();}catch(e){}},700);
- }catch(e){
-   submitting=false; counter.innerHTML='<div class="error">Не удалось отправить расклад. Закройте приложение и попробуйте ещё раз.</div>'; console.error(e);
+   if(navigator.sendBeacon){
+     sent=navigator.sendBeacon('/api/miniapp/select',new Blob([payload],{type:'application/json'}));
+   }
+ }catch(e){console.error(e);}
+ if(!sent){
+   try{fetch('/api/miniapp/select',{method:'POST',headers:{'Content-Type':'application/json'},body:payload,keepalive:true}).catch(e=>console.error(e));}
+   catch(e){console.error(e);}
  }
+ // Не ждём ответ CHAD: сервер продолжает обработку, а Mini App закрывается сразу после последнего переворота.
+ setTimeout(()=>{try{if(tg){tg.close();}else{window.close();}}catch(e){console.error(e);}},700);
 }
 async function loadCards(){
  try{
