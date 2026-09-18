@@ -1,4 +1,4 @@
-import asyncio, hashlib, hmac, html, json, secrets, urllib.parse
+import asyncio, hashlib, hmac, html, json, secrets, urllib.parse, re
 from pathlib import Path
 from typing import Optional
 
@@ -256,25 +256,28 @@ async def mini_config(deck:str='waite'):
     # Берём реальные файлы из папки и сопоставляем их с 24 рунами по порядку.
     if deck == 'runes':
         folder = BASE / 'Руны'
+        if not folder.is_dir():
+            # fallback for a differently cased folder name
+            for p in BASE.iterdir():
+                if p.is_dir() and p.name.strip().lower() == 'руны':
+                    folder = p
+                    break
         files = sorted(
-            [p for p in folder.glob('*') if p.is_file() and p.suffix.lower() in ('.jpg','.jpeg','.png','.webp')],
-            key=lambda p: p.name.lower()
+            [p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in ('.jpg', '.jpeg', '.png', '.webp')]
+            if folder.is_dir() else [],
+            key=lambda p: p.name.casefold()
         )
-        # Если файлы имеют числовые имена — сортируем именно по номеру.
         numeric = []
         for p in files:
-            m = re.search(r'(?<!\\d)(\\d{1,3})(?!\\d)', p.stem)
+            m = re.search(r'(?<!\d)(\d{1,3})(?!\d)', p.stem)
             numeric.append((int(m.group(1)), p) if m else (None, p))
-        if files and all(n is not None for n,_ in numeric):
-            files = [p for _,p in sorted(numeric, key=lambda x:x[0])]
-
+        if files and all(n is not None for n, _ in numeric):
+            files = [p for _, p in sorted(numeric, key=lambda x: x[0])]
         cards = []
         for i, name in enumerate(names):
             image = ''
             if i < len(files):
                 image = '/cards/' + urllib.parse.quote(folder.name) + '/' + urllib.parse.quote(files[i].name)
-            else:
-                image = card_image(deck, i, name)
             cards.append({'id': i, 'name': name, 'image': image})
         return {'deck': deck, 'cards': cards}
 
@@ -304,19 +307,18 @@ def card_image(deck,i,name):
         return ''
     if deck=='runes':
         folder=BASE/'Руны'
-        files=sorted(
-            [p for p in folder.glob('*') if p.is_file() and p.suffix.lower() in ('.jpg','.jpeg','.png','.webp')],
-            key=lambda p:p.name.lower()
-        )
+        if not folder.is_dir():
+            for p in BASE.iterdir():
+                if p.is_dir() and p.name.strip().lower()=='руны':
+                    folder=p; break
+        files=sorted([p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in ('.jpg','.jpeg','.png','.webp')] if folder.is_dir() else [], key=lambda p:p.name.casefold())
         numeric=[]
         for p in files:
-            m=re.search(r'(?<!\\d)(\\d{1,3})(?!\\d)',p.stem)
+            m=re.search(r'(?<!\d)(\d{1,3})(?!\d)',p.stem)
             numeric.append((int(m.group(1)),p) if m else (None,p))
-        if files and all(n is not None for n,_ in numeric):
-            files=[p for _,p in sorted(numeric,key=lambda x:x[0])]
-        if 0 <= i < len(files):
-            return '/cards/'+urllib.parse.quote(folder.name)+'/'+urllib.parse.quote(files[i].name)
-        return ''
+        if files and all(n is not None for n,_ in numeric): files=[p for _,p in sorted(numeric,key=lambda x:x[0])]
+        if 0 <= i < len(files): return '/cards/'+urllib.parse.quote(folder.name)+'/'+urllib.parse.quote(files[i].name)
+    return ''
     return ''
 
 def validate_init_data(init_data):
@@ -408,14 +410,10 @@ async def mini_select(request:Request):
         db.add(uid,1)
         raise HTTPException(409,'Вопрос не найден')
 
-    # Важно: Telegram Mini App получает быстрый ответ.
-    # Сам CHAD-запрос продолжает выполняться на сервере в фоне.
-    # Поэтому приложение можно закрыть сразу после подтверждения отправки,
-    # и расклад не обрывается.
+    # Сначала подтверждаем клиенту, что выбор принят, и только затем запускаем CHAD в фоне.
+    # Эндпоинт НЕ ждёт ответа ИИ, поэтому Mini App может безопасно закрыться после ответа 200.
     await bot.send_message(uid,'Отправляем ваш запрос во Вселенную... Подождите...')
-    asyncio.create_task(
-        process_reading(uid, deck, mode, cards, question, premium)
-    )
+    asyncio.create_task(process_reading(uid, deck, mode, cards, question, premium))
     return {'ok':True,'accepted':True}
 
 @app.post('/yookassa/webhook')
