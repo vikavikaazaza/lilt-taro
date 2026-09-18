@@ -47,8 +47,9 @@ def mini_url(deck,mode):
     if not bot_url().startswith('https://'): raise RuntimeError('PUBLIC_BASE_URL должен начинаться с https://')
     return f'{bot_url()}/miniapp?deck={urllib.parse.quote(deck)}&mode={urllib.parse.quote(mode)}'
 
-def mini_button(deck,mode):
-    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='Получить карты',web_app=WebAppInfo(url=mini_url(deck,mode)))]] )
+def mini_button(deck,mode,text=None):
+    button_text=text or ('Получить руны' if deck=='runes' else 'Получить карты')
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=button_text,web_app=WebAppInfo(url=mini_url(deck,mode)))]] )
 
 async def main_menu(m):
     u=db.get(m.from_user.id); left=(int(u['requests']) if u else 0)+(int(u['paid_requests']) if u else 0)
@@ -118,16 +119,33 @@ async def deck_cb(c):
     uid=c.from_user.id
     deck=c.data.split(':',1)[1]
     db.set_pending(uid,deck,'free','')
-    await c.message.answer(f'Давай погадаем на {DECK_NAMES[deck]}\\n\\nСформулируй свой вопрос и напиши его полностью ❤️\\n\\nНапример: Что ждет меня в следующем месяце?')
+    await c.message.answer(
+        f'Давай погадаем на {DECK_NAMES[deck]}\n\n'
+        'Сформулируй свой вопрос и напиши его полностью ❤️\n\n'
+        'Например: Что ждет меня в следующем месяце?'
+    )
+
 @router.callback_query(F.data=='day')
 async def day_cb(c):
     await c.answer()
-    await day_start(types.Message.model_validate(c.message.model_dump()))
+    uid=c.from_user.id
+    u=db.get(uid)
+    total=(int(u['requests'])+int(u['paid_requests'])) if u else 0
+    if total<=0:
+        await c.message.answer('У вас осталось 0 запросов.')
+        await subscription(c.message)
+        return
+    mode='premium' if int(u['paid_requests'])>0 else 'free'
+    db.set_pending(uid,'day',mode,'Карта дня')
+    await c.message.answer(
+        'Начинаем гадание, переходим к карте дня. 🧘🏼',
+        reply_markup=mini_button('day',mode,'Получить карту дня')
+    )
 @router.callback_query(F.data=='meaning')
 async def meaning_cb(c):
     await c.answer()
     db.set_pending(c.from_user.id,'meaning','meaning','')
-    await c.message.answer('Давай посмотрим значение любой карты, которая тебе интересна ✨\\n\\nПросто введи название одной карты\\n\\nНапример: Двойка мечей или Умеренность')
+    await c.message.answer('Давай посмотрим значение любой карты, которая тебе интересна ✨\n\nПросто введи название одной карты\n\nНапример: Двойка мечей или Умеренность')
 @router.callback_query(F.data=='friend')
 async def friend_cb(c): await c.answer(); await friend_show(c.message)
 @router.callback_query(F.data=='pay')
@@ -172,7 +190,12 @@ async def text_message(m):
     deck=p['deck']; db.set_pending(m.from_user.id,deck,mode,m.text)
     db.event(m.from_user.id,'question',f'{deck}|{m.text[:500]}')
     await send_admin_question(m,deck,m.text)
-    await m.answer('Начинаем гадание, переходим к картам.',reply_markup=mini_button(deck,mode))
+    if deck=='runes':
+        await m.answer('Начинаем гадание, переходим к рунам. 🪬',reply_markup=mini_button(deck,mode,'Получить руны'))
+    elif deck=='day':
+        await m.answer('Начинаем гадание, переходим к карте дня. 🧘🏼',reply_markup=mini_button(deck,mode,'Получить карту дня'))
+    else:
+        await m.answer('Начинаем гадание, переходим к картам.',reply_markup=mini_button(deck,mode,'Получить карты'))
 
 def match_waite(q):
     norm=' '.join(q.lower().replace('ё','е').split())
@@ -228,18 +251,36 @@ async def mini_config(deck:str='waite'):
     return {'deck':deck,'cards':[{'id':i,'name':n,'image':card_image(deck,i,n)} for i,n in enumerate(names)]}
 
 def card_image(deck,i,name):
-    if deck in ('waite','day'): return f'/cards/{"Таро Уэйта" if deck=="waite" else "Карта Дня"}/{i:02d}.jpg'
+    if deck=='waite':
+        folder=BASE/'Таро Уэйта'; filename=f'{i:02d}.jpg'
+        if (folder/filename).is_file(): return '/cards/'+urllib.parse.quote(folder.name)+'/'+urllib.parse.quote(filename)
+        return ''
+    if deck=='day':
+        # Карта Дня использует те же 78 изображений Уэйта, которые лежат в отдельной папке.
+        folder=BASE/'Карта Дня'; filename=f'{i:02d}.jpg'
+        if (folder/filename).is_file(): return '/cards/'+urllib.parse.quote(folder.name)+'/'+urllib.parse.quote(filename)
+        # Если на сервере папка Карта Дня отсутствует, используем оригинальные карты Уэйта.
+        fallback=BASE/'Таро Уэйта'/filename
+        if fallback.is_file(): return '/cards/'+urllib.parse.quote('Таро Уэйта')+'/'+urllib.parse.quote(filename)
+        return ''
     if deck=='manara':
         if i < 22: filename=f'{i}.jpg'
         else:
             prefix={22:'ж',36:'ч',50:'м',64:'п'}[22+14*((i-22)//14)]
             number=(i-22)%14+1
             filename=f'{prefix}{number}.jpg'
-        return '/cards/Таро Манара/'+urllib.parse.quote(filename)
-    # exact rune filename lookup
-    candidates=[p.name for p in (BASE/'Руны').glob('*.jpg')]
-    for p in candidates:
-        if p.replace('.jpg','').strip()==name: return '/cards/Руны/'+urllib.parse.quote(p)
+        folder=BASE/'Таро Манара'
+        if (folder/filename).is_file(): return '/cards/'+urllib.parse.quote(folder.name)+'/'+urllib.parse.quote(filename)
+        return ''
+    if deck=='runes':
+        folder=BASE/'Руны'
+        target=' '.join(str(name).lower().replace('ё','е').split())
+        for file in folder.glob('*'):
+            if file.is_file() and file.suffix.lower() in ('.jpg','.jpeg','.png'):
+                stem=' '.join(file.stem.lower().replace('ё','е').split())
+                if stem==target:
+                    return '/cards/'+urllib.parse.quote(folder.name)+'/'+urllib.parse.quote(file.name)
+        return ''
     return ''
 
 def validate_init_data(init_data):
@@ -276,13 +317,9 @@ async def mini_select(request:Request):
         db.reading(uid,deck,mode,question['question'],json.dumps(names,ensure_ascii=False),answer)
         left=db.balance(uid)+int(db.get(uid)['paid_requests'])
         await bot.send_message(uid,answer)
+        # Оставляем активную колоду, чтобы следующий текст клиента сразу стал новым вопросом.
         db.set_pending(uid,deck,mode,'')
-        await bot.send_message(
-            uid,
-            f'Давай погадаем на {DECK_NAMES.get(deck,deck)}\n\n'
-            'Сформулируй свой вопрос и напиши его полностью ❤️\n\n'
-            'Например: Что ждет меня в следующем месяце?'
-        )
+        await bot.send_message(uid,f'Ваше количество запросов: {left}\n\nЗадайте свой вопрос ❤️')
         return {'ok':True,'left':left}
     except Exception as e:
         db.add(uid,1)
