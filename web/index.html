@@ -2,70 +2,48 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>Лилит</title><script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
-*{box-sizing:border-box}body{margin:0;background:#08091b;color:#ead39b;font-family:Georgia,serif}
-.app{max-width:760px;margin:auto;padding:16px}.top{text-align:center;margin-bottom:12px}.sub{font:13px Arial;color:#bcae8c;margin-top:5px}
-.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.card{aspect-ratio:.55;perspective:900px;cursor:pointer}
-.inner{height:100%;position:relative;transform-style:preserve-3d;transition:.45s}.flip .inner{transform:rotateY(180deg)}
-.face{position:absolute;inset:0;backface-visibility:hidden;border-radius:8px;overflow:hidden;border:1px solid #b89b57}
-.back{background:#111329 url('/cards/card-back.jpeg') center/100% 100% no-repeat}.front{transform:rotateY(180deg);background:#111}
-.front img{width:100%;height:100%;object-fit:cover;display:block}.selected{pointer-events:none}
-.counter{text-align:center;margin:12px;font:12px Arial;color:#d9bd70}
-</style></head><body><main class="app">
-<div class="top"><div>✦ Выберите карты ✦</div><div class="sub">Нажмите на карты по очереди</div></div>
-<div id="counter" class="counter">Загрузка карт...</div><div id="grid" class="grid"></div>
-</main><script>
+*{box-sizing:border-box}body{margin:0;background:#08091b;color:#ead39b;font-family:Georgia,serif}.app{max-width:760px;margin:auto;padding:16px}.top{text-align:center;margin-bottom:12px}.sub{font:13px Arial;color:#bcae8c;margin-top:5px}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.card{aspect-ratio:.55;perspective:900px;cursor:pointer}.inner{height:100%;position:relative;transform-style:preserve-3d;transition:.55s}.flip .inner{transform:rotateY(180deg)}.face{position:absolute;inset:0;backface-visibility:hidden;border-radius:8px;overflow:hidden;border:1px solid #b89b57}.back{background:#111329 url('/cards/card-back.jpeg') center/100% 100% no-repeat}.front{transform:rotateY(180deg);background:#111}.front img{width:100%;height:100%;object-fit:cover;display:block}.selected{pointer-events:none}.counter{text-align:center;margin:12px;font:12px Arial;color:#d9bd70}.error{text-align:center;color:#e8b8b8;font:14px Arial;margin-top:20px}</style></head><body><main class="app"><div class="top"><div>✦ Выберите карты ✦</div><div class="sub">Нажмите на карты по очереди</div></div><div id="counter" class="counter">Загрузка карт...</div><div id="grid" class="grid"></div></main><script>
 const tg=window.Telegram?.WebApp;if(tg){tg.ready();tg.expand();}
 const p=new URLSearchParams(location.search),deck=p.get('deck')||'waite',mode=p.get('mode')==='premium'?'premium':'free';
 const max=deck==='day'?1:(mode==='premium'?9:3),grid=document.getElementById('grid'),counter=document.getElementById('counter');
-
+let submitting=false;
 async function submitAndClose(cards){
-  const payload=JSON.stringify({
-    initData:tg.initData,
-    deck:deck,
-    mode:mode,
-    cards:cards
-  });
-  try{
-    const r=await fetch('/api/miniapp/select',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:payload,
-      keepalive:true
-    });
-    if(!r.ok){
-      console.error('miniapp/select',r.status,await r.text());
-      return;
-    }
-    // Сервер уже принял карты и запустил расклад в фоне.
-    // Закрываем Mini App только после подтверждения приёма.
-    setTimeout(()=>tg.close(),450);
-  }catch(e){
-    console.error('miniapp/select',e);
-  }
+ if(submitting)return; submitting=true;
+ counter.textContent='Карты выбраны ✨';
+ const payload={initData:tg?.initData||'',deck,mode,cards};
+ try{
+   const r=await fetch('/api/miniapp/select',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),keepalive:true});
+   if(!r.ok){let msg='Ошибка отправки';try{const d=await r.json();msg=d.detail||msg}catch(e){} throw new Error(msg);}
+   // Сервер уже принял выбор и запустил расшифровку в фоне. Даем клиенту увидеть последний переворот.
+   setTimeout(()=>{try{tg?.close();}catch(e){}},700);
+ }catch(e){
+   submitting=false; counter.innerHTML='<div class="error">Не удалось отправить расклад. Закройте приложение и попробуйте ещё раз.</div>'; console.error(e);
+ }
 }
 async function loadCards(){
-  try{
-    const r=await fetch('/api/miniapp/config?deck='+encodeURIComponent(deck),{cache:'no-store'});
-    if(!r.ok)throw Error('HTTP '+r.status);
-    const data=await r.json(),cards=(data.cards||[]).filter(x=>x.image).sort(()=>Math.random()-.5);
-    if(!cards.length)throw Error('no cards');
-    counter.textContent=`Выбрано: 0 / ${max}`;
-    const selected=[];
-    cards.forEach(card=>{
-      const e=document.createElement('div');e.className='card';
-      e.innerHTML=`<div class="inner"><div class="face back"></div><div class="face front"><img src="${card.image}" alt=""></div></div>`;
-      e.onclick=()=>{
-        if(selected.length>=max||selected.some(x=>x.id===card.id))return;
-        selected.push({id:card.id,name:card.name});e.classList.add('flip','selected');
-        counter.textContent=`Выбрано: ${selected.length} / ${max}`;
-        if(selected.length===max){
-          counter.textContent='Карты выбраны ✨';
-          // Даем клиенту увидеть полный переворот последней карты.
-          setTimeout(()=>submitAndClose(selected),1800);
-        }
-      };grid.appendChild(e);
-    });
-  }catch(e){counter.textContent='Не удалось загрузить карты';console.error(e);}
+ try{
+  const r=await fetch('/api/miniapp/config?deck='+encodeURIComponent(deck),{cache:'no-store'});
+  if(!r.ok)throw Error('HTTP '+r.status);
+  const data=await r.json(),all=data.cards||[];
+  const cards=all.filter(x=>x.image);
+  if(!cards.length)throw Error('no cards');
+  counter.textContent=`Выбрано: 0 / ${max}`;
+  const selected=[];
+  cards.sort(()=>Math.random()-.5).forEach(card=>{
+   const e=document.createElement('div');e.className='card';
+   e.innerHTML=`<div class="inner"><div class="face back"></div><div class="face front"><img src="${card.image}" alt="${String(card.name).replace(/"/g,'&quot;')}"></div></div>`;
+   e.onclick=()=>{
+    if(submitting||selected.length>=max||selected.some(x=>x.id===card.id))return;
+    selected.push({id:card.id,name:card.name});e.classList.add('flip','selected');
+    counter.textContent=`Выбрано: ${selected.length} / ${max}`;
+    if(selected.length===max){
+      counter.textContent='Последняя карта открывается… ✨';
+      setTimeout(()=>submitAndClose(selected),1900);
+    }
+   };
+   grid.appendChild(e);
+  });
+ }catch(e){counter.innerHTML='<div class="error">Не удалось загрузить карты</div>';console.error(e);}
 }
 loadCards();
 </script></body></html>
