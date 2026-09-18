@@ -246,8 +246,38 @@ async def miniapp(): return FileResponse(BASE/'web'/'index.html')
 
 @app.get('/api/miniapp/config')
 async def mini_config(deck:str='waite'):
-    if deck not in ('waite','manara','runes','day'): raise HTTPException(400,'unknown deck')
-    names=WAITE if deck in ('waite','day') else MANARA if deck=='manara' else RUNES
+    if deck not in ('waite','manara','runes','day'):
+        raise HTTPException(400,'unknown deck')
+
+    names = WAITE if deck in ('waite','day') else MANARA if deck=='manara' else RUNES
+
+    # Для рун не привязываемся к конкретному названию файла.
+    # На сервере изображения могут называться по-разному (имя руны, 01.jpg и т.п.).
+    # Берём реальные файлы из папки и сопоставляем их с 24 рунами по порядку.
+    if deck == 'runes':
+        folder = BASE / 'Руны'
+        files = sorted(
+            [p for p in folder.glob('*') if p.is_file() and p.suffix.lower() in ('.jpg','.jpeg','.png','.webp')],
+            key=lambda p: p.name.lower()
+        )
+        # Если файлы имеют числовые имена — сортируем именно по номеру.
+        numeric = []
+        for p in files:
+            m = re.search(r'(?<!\\d)(\\d{1,3})(?!\\d)', p.stem)
+            numeric.append((int(m.group(1)), p) if m else (None, p))
+        if files and all(n is not None for n,_ in numeric):
+            files = [p for _,p in sorted(numeric, key=lambda x:x[0])]
+
+        cards = []
+        for i, name in enumerate(names):
+            image = ''
+            if i < len(files):
+                image = '/cards/' + urllib.parse.quote(folder.name) + '/' + urllib.parse.quote(files[i].name)
+            else:
+                image = card_image(deck, i, name)
+            cards.append({'id': i, 'name': name, 'image': image})
+        return {'deck': deck, 'cards': cards}
+
     return {'deck':deck,'cards':[{'id':i,'name':n,'image':card_image(deck,i,n)} for i,n in enumerate(names)]}
 
 def card_image(deck,i,name):
@@ -274,12 +304,18 @@ def card_image(deck,i,name):
         return ''
     if deck=='runes':
         folder=BASE/'Руны'
-        target=' '.join(str(name).lower().replace('ё','е').split())
-        for file in folder.glob('*'):
-            if file.is_file() and file.suffix.lower() in ('.jpg','.jpeg','.png'):
-                stem=' '.join(file.stem.lower().replace('ё','е').split())
-                if stem==target:
-                    return '/cards/'+urllib.parse.quote(folder.name)+'/'+urllib.parse.quote(file.name)
+        files=sorted(
+            [p for p in folder.glob('*') if p.is_file() and p.suffix.lower() in ('.jpg','.jpeg','.png','.webp')],
+            key=lambda p:p.name.lower()
+        )
+        numeric=[]
+        for p in files:
+            m=re.search(r'(?<!\\d)(\\d{1,3})(?!\\d)',p.stem)
+            numeric.append((int(m.group(1)),p) if m else (None,p))
+        if files and all(n is not None for n,_ in numeric):
+            files=[p for _,p in sorted(numeric,key=lambda x:x[0])]
+        if 0 <= i < len(files):
+            return '/cards/'+urllib.parse.quote(folder.name)+'/'+urllib.parse.quote(files[i].name)
         return ''
     return ''
 
@@ -295,41 +331,92 @@ def validate_init_data(init_data):
         user_data=json.loads(data.get('user','{}')); return user_data
     except Exception: return None
 
-@app.post('/api/miniapp/select')
-async def mini_select(request:Request):
-    body=await request.json(); tg=validate_init_data(body.get('initData',''))
-    if not tg: raise HTTPException(403,'Недействительный Telegram initData')
-    uid=int(tg['id']); user=db.get(uid)
-    if not user: raise HTTPException(404,'Пользователь не найден')
-    deck=body.get('deck'); mode=body.get('mode','free'); cards=body.get('cards',[]); question=db.get_pending(uid)
-    expected=1 if deck=='day' else (9 if mode=='premium' else 3)
-    if deck not in ('waite','manara','runes','day') or len(cards)!=expected: raise HTTPException(400,'Неверное количество карт')
-    names=[str(x.get('name','')) for x in cards]
-    allowed=WAITE if deck in ('waite','day') else MANARA if deck=='manara' else RUNES
-    if any(n not in allowed for n in names): raise HTTPException(400,'Недопустимая карта')
-    premium=(mode=='premium' and deck!='meaning')
-    if not db.consume(uid,premium=premium): raise HTTPException(409,'Нет доступных запросов')
-    if not question or question['deck']!=deck: db.add(uid,1); raise HTTPException(409,'Вопрос не найден')
-    await bot.send_message(uid,'Отправляем ваш запрос во Вселенную... Подождите...')
+async def process_reading(uid, deck, mode, cards, question, premium):
+    names = [str(x.get('name','')) if isinstance(x,dict) else str(x) for x in cards]
     try:
         print(f'[READING] user_id={uid} deck={deck} question={question["question"]!r} selected_cards={names!r}')
-        answer=await ask(deck,question['question'],cards,paid=premium,day=(deck=='day'))
-        db.reading(uid,deck,mode,question['question'],json.dumps(names,ensure_ascii=False),answer)
-        left=db.balance(uid)+int(db.get(uid)['paid_requests'])
-        await bot.send_message(uid,answer)
-        # Оставляем активную колоду, чтобы следующий текст клиента сразу стал новым вопросом.
-        db.set_pending(uid,deck,mode,'')
-        await bot.send_message(uid,f'Ваше количество запросов: {left}\n\nЗадайте свой вопрос ❤️')
-        return {'ok':True,'left':left}
+        answer = await ask(
+            deck,
+            question['question'],
+            cards,
+            paid=premium,
+            day=(deck == 'day')
+        )
+        db.reading(
+            uid, deck, mode, question['question'],
+            json.dumps(names, ensure_ascii=False), answer
+        )
+        user_now = db.get(uid)
+        left = db.balance(uid) + int(user_now['paid_requests']) if user_now else 0
+
+        await bot.send_message(uid, answer)
+
+        # Следующий текст клиента становится новым вопросом этой же колоды.
+        db.set_pending(uid, deck, mode, '')
+        await bot.send_message(
+            uid,
+            f'Ваше количество запросов: {left}\n\n'
+            'Задайте свой вопрос ❤️'
+        )
+        print(f'[READING] done user_id={uid} left={left}')
     except Exception as e:
-        db.add(uid,1)
-        db.clear_pending(uid)
+        # Запрос был списан перед запуском чтения — при ошибке возвращаем его.
         try:
-            await bot.send_message(uid,'Не удалось получить расшифровку прямо сейчас. Запрос возвращён на баланс. Попробуйте ещё раз немного позже.')
-        except Exception:
-            pass
-        print(f'[READING] Ошибка для user_id={uid}: {e}')
-        return {'ok':False,'error':'reading_failed'}
+            db.add(uid, 1)
+            db.clear_pending(uid)
+            await bot.send_message(
+                uid,
+                'Не удалось получить расшифровку прямо сейчас. '
+                'Запрос возвращён на баланс. Попробуйте ещё раз немного позже.'
+            )
+        except Exception as inner:
+            print(f'[READING] recovery error user_id={uid}: {inner}')
+        print(f'[READING] Ошибка для user_id={uid}: {e!r}')
+
+
+@app.post('/api/miniapp/select')
+async def mini_select(request:Request):
+    body = await request.json()
+    tg = validate_init_data(body.get('initData',''))
+    if not tg:
+        raise HTTPException(403,'Недействительный Telegram initData')
+
+    uid = int(tg['id'])
+    user = db.get(uid)
+    if not user:
+        raise HTTPException(404,'Пользователь не найден')
+
+    deck = body.get('deck')
+    mode = body.get('mode','free')
+    cards = body.get('cards',[])
+    question = db.get_pending(uid)
+
+    expected = 1 if deck == 'day' else (9 if mode == 'premium' else 3)
+    if deck not in ('waite','manara','runes','day') or len(cards) != expected:
+        raise HTTPException(400,'Неверное количество карт')
+
+    names = [str(x.get('name','')) if isinstance(x,dict) else str(x) for x in cards]
+    allowed = WAITE if deck in ('waite','day') else MANARA if deck=='manara' else RUNES
+    if any(n not in allowed for n in names):
+        raise HTTPException(400,'Недопустимая карта')
+
+    premium = (mode == 'premium' and deck != 'meaning')
+    if not db.consume(uid, premium=premium):
+        raise HTTPException(409,'Нет доступных запросов')
+
+    if not question or question['deck'] != deck:
+        db.add(uid,1)
+        raise HTTPException(409,'Вопрос не найден')
+
+    # Важно: Telegram Mini App получает быстрый ответ.
+    # Сам CHAD-запрос продолжает выполняться на сервере в фоне.
+    # Поэтому приложение можно закрыть сразу после подтверждения отправки,
+    # и расклад не обрывается.
+    await bot.send_message(uid,'Отправляем ваш запрос во Вселенную... Подождите...')
+    asyncio.create_task(
+        process_reading(uid, deck, mode, cards, question, premium)
+    )
+    return {'ok':True,'accepted':True}
 
 @app.post('/yookassa/webhook')
 async def yookassa_webhook(request:Request):
