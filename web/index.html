@@ -41,7 +41,11 @@ async function loadCards(){
         if(selected.length>=max||selected.some(x=>x.id===card.id))return;
         selected.push({id:card.id,name:card.name});e.classList.add('flip','selected');
         counter.textContent=`Выбрано: ${selected.length} / ${max}`;
-        if(selected.length===max)submitAndClose(selected);
+        if(selected.length===max){
+          counter.textContent='Карты выбраны ✨';
+          // Даем клиенту увидеть полный переворот последней карты.
+          setTimeout(()=>submitAndClose(selected),1200);
+        }
       };grid.appendChild(e);
     });
   }catch(e){counter.textContent='Не удалось загрузить карты';console.error(e);}
