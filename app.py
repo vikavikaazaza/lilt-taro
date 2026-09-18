@@ -47,10 +47,10 @@ DECK_NAMES={'waite':'Таро Уэйта','manara':'Таро Манара','day'
 
 def menu():
     return InlineKeyboardMarkup(inline_keyboard=[
-      [InlineKeyboardButton(text='Таро Уэйта 🔮',callback_data='deck:waite'),InlineKeyboardButton(text='Таро Манара 🍓',callback_data='deck:manara')],
-      [InlineKeyboardButton(text='Карта дня 🧘🏼',callback_data='day')],
-      [InlineKeyboardButton(text='Реферальная программа ❤️',callback_data='friend')],
-      [InlineKeyboardButton(text='Оформить подписку 🌟',callback_data='pay')]])
+      [InlineKeyboardButton(text='Таро Уэйта',callback_data='deck:waite'),InlineKeyboardButton(text='Таро Манара 🍓',callback_data='deck:manara')],
+      [InlineKeyboardButton(text='Карта дня',callback_data='day')],
+      [InlineKeyboardButton(text='Реферальная программа',callback_data='friend')],
+      [InlineKeyboardButton(text='Оформить подписку',callback_data='pay')]])
 
 def pay_menu():
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='3 вопроса — 99 рублей',callback_data='pack:3')],[InlineKeyboardButton(text='5 вопросов — 159 рублей',callback_data='pack:5')],[InlineKeyboardButton(text='10 вопросов — 329 рублей',callback_data='pack:10')]])
