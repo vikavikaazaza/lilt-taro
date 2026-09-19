@@ -96,7 +96,7 @@ async def day_start(m):
         await subscription(m)
         return
     db.set_pending(m.from_user.id,'day','free','Карта дня')
-    await m.answer('Начинаем гадание, переходим к карте дня. 🧘🏼',reply_markup=mini_buttons('day','free'))
+    await m.answer('Давай посмотрим, что ждет тебя сегодня❤️ Ты можешь сам вытянуть карты из колоды или довериться судьбе🌙',reply_markup=mini_buttons('day','free'))
 
 async def deck_start(m,deck):
     mode='premium' if premium_access(m.from_user.id) else 'free'
@@ -158,7 +158,7 @@ async def day_cb(c):
         await subscription(c.message)
         return
     db.set_pending(uid,'day','free','Карта дня')
-    await c.message.answer('Начинаем гадание, переходим к карте дня. 🧘🏼',reply_markup=mini_buttons('day','free'))
+    await c.message.answer('Давай посмотрим, что ждет тебя сегодня❤️ Ты можешь сам вытянуть карты из колоды или довериться судьбе🌙',reply_markup=mini_buttons('day','free'))
 
 @router.callback_query(F.data=='friend')
 async def friend_cb(c): await c.answer(); await friend_show(c.message)
@@ -198,9 +198,9 @@ async def text_message(m):
     await send_admin_question(m,deck,m.text)
     if deck=='day':
         db.set_pending(m.from_user.id,'day','free',m.text)
-        await m.answer('Начинаем гадание, переходим к карте дня. 🧘🏼',reply_markup=mini_buttons('day','free'))
+        await m.answer('Давай посмотрим, что ждет тебя сегодня❤️ Ты можешь сам вытянуть карты из колоды или довериться судьбе🌙',reply_markup=mini_buttons('day','free'))
     else:
-        await m.answer('Начинаем гадание, выбирай карты или доверься судьбе ✨',reply_markup=mini_buttons(deck,mode))
+        await m.answer('Твой вопрос услышан. Сейчас карты покажут то, что важно увидеть именно тебе 🌙 Ты можешь сам вытянуть карты из колоды или довериться судьбе✨',reply_markup=mini_buttons(deck,mode))
 
 def match_waite(q):
     norm=' '.join(q.lower().replace('ё','е').split())
