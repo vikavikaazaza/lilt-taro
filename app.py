@@ -16,6 +16,8 @@ from chad import ask
 BASE=Path(__file__).resolve().parent
 router=Router()
 bot: Bot
+BROADCAST_TASKS=set()
+READING_TASKS=set()
 
 
 def has_manual_subscription(uid):
@@ -50,7 +52,7 @@ def menu():
       [InlineKeyboardButton(text='Таро Уэйта',callback_data='deck:waite'),InlineKeyboardButton(text='Таро Манара',callback_data='deck:manara')],
       [InlineKeyboardButton(text='Карта дня',callback_data='day')],
       [InlineKeyboardButton(text='Реферальная программа',callback_data='friend')],
-      [InlineKeyboardButton(text='Оформить подписку',callback_data='pay')]])
+      [InlineKeyboardButton(text='Оформить подписку 🌟',callback_data='pay')]])
 
 def pay_menu():
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='3 вопроса — 99 рублей',callback_data='pack:3')],[InlineKeyboardButton(text='5 вопросов — 159 рублей',callback_data='pack:5')],[InlineKeyboardButton(text='10 вопросов — 329 рублей',callback_data='pack:10')]])
@@ -60,13 +62,16 @@ def sub_image(): return BASE/'Фото'/'Подписка.jpg'
 
 def bot_url(): return config.PUBLIC_BASE_URL
 
-def mini_url(deck,mode):
+def mini_url(deck,mode,choice='manual'):
     if not bot_url().startswith('https://'): raise RuntimeError('PUBLIC_BASE_URL должен начинаться с https://')
-    return f'{bot_url()}/miniapp?deck={urllib.parse.quote(deck)}&mode={urllib.parse.quote(mode)}'
+    return f'{bot_url()}/miniapp?deck={urllib.parse.quote(deck)}&mode={urllib.parse.quote(mode)}&choice={urllib.parse.quote(choice)}'
 
-def mini_button(deck,mode,text=None):
-    button_text=text or ('Получить карту дня' if deck=='day' else 'Получить карты')
-    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=button_text,web_app=WebAppInfo(url=mini_url(deck,mode)))]] )
+def mini_buttons(deck,mode):
+    manual_text='Получить карту дня' if deck=='day' else 'Получить карты'
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=manual_text,web_app=WebAppInfo(url=mini_url(deck,mode,'manual')))],
+        [InlineKeyboardButton(text='Довериться судьбе ✨',web_app=WebAppInfo(url=mini_url(deck,mode,'fate')))]
+    ])
 
 async def main_menu(m):
     u=db.get(m.from_user.id); left=(int(u['requests']) if u else 0)+(int(u['paid_requests']) if u else 0)
@@ -88,7 +93,7 @@ async def day_start(m):
         await subscription(m)
         return
     db.set_pending(m.from_user.id,'day','free','Карта дня')
-    await m.answer('Сейчас карты покажут, на что стоит обратить внимание сегодня 🧘🏼',reply_markup=mini_button('day','free','Получить карту дня'))
+    await m.answer('Начинаем гадание, переходим к карте дня. 🧘🏼',reply_markup=mini_buttons('day','free'))
 
 async def deck_start(m,deck):
     mode='premium' if premium_access(m.from_user.id) else 'free'
@@ -107,7 +112,7 @@ async def start(m:types.Message):
             source='instagram'
         db.user(m.from_user,source,referrer)
         if referrer:
-            db.add(referrer,1); db.event(referrer,'referral_success',str(m.from_user.id)); await bot.send_message(referrer,'Вам начислен 1 бесплатный запрос за нового друга!❤️')
+            db.add(referrer,1); db.event(referrer,'referral_success',str(m.from_user.id)); await bot.send_message(referrer,'❤️ Вам начислен 1 бесплатный запрос за нового друга!')
     else:
         db.user(m.from_user,existing['source'] or 'telegram',existing['referrer_id'])
     db.event(m.from_user.id,'start',source if not existing else 'return')
@@ -150,7 +155,7 @@ async def day_cb(c):
         await subscription(c.message)
         return
     db.set_pending(uid,'day','free','Карта дня')
-    await c.message.answer('Сейчас карты покажут, на что стоит обратить внимание сегодня 🧘🏼',reply_markup=mini_button('day','free','Получить карту дня'))
+    await c.message.answer('Начинаем гадание, переходим к карте дня. 🧘🏼',reply_markup=mini_buttons('day','free'))
 
 @router.callback_query(F.data=='friend')
 async def friend_cb(c): await c.answer(); await friend_show(c.message)
@@ -190,9 +195,9 @@ async def text_message(m):
     await send_admin_question(m,deck,m.text)
     if deck=='day':
         db.set_pending(m.from_user.id,'day','free',m.text)
-        await m.answer('Сейчас карты покажут, на что стоит обратить внимание сегодня 🧘🏼',reply_markup=mini_button('day','free','Получить карту дня'))
+        await m.answer('Начинаем гадание, переходим к карте дня. 🧘🏼',reply_markup=mini_buttons('day','free'))
     else:
-        await m.answer('Твой вопрос услышан. Сейчас карты покажут то, что важно увидеть именно тебе 🌙',reply_markup=mini_button(deck,mode,'Получить карты'))
+        await m.answer('Начинаем гадание, выбирай карты или доверься судьбе ✨',reply_markup=mini_buttons(deck,mode))
 
 def match_waite(q):
     norm=' '.join(q.lower().replace('ё','е').split())
@@ -286,6 +291,11 @@ def validate_init_data(init_data):
         user_data=json.loads(data.get('user','{}')); return user_data
     except Exception: return None
 
+def _track_reading_task(task):
+    READING_TASKS.add(task)
+    task.add_done_callback(READING_TASKS.discard)
+
+
 async def process_reading(uid, deck, mode, cards, question, premium):
     names=[str(x.get('name','')) if isinstance(x,dict) else str(x) for x in cards]
     try:
@@ -332,26 +342,74 @@ async def mini_select(request:Request):
         if not question or question['deck']!=deck or not question['question']:
             raise HTTPException(409,'Вопрос не найден')
         mode='premium' if (premium_access(uid) and deck!='day') else 'free'
-        # Never trust the Mini App's mode for access control; the server decides.
         expected=1 if deck=='day' else (9 if mode=='premium' else 3)
         if deck not in ('waite','manara','day') or len(cards)!=expected:
             raise HTTPException(400,'Неверное количество карт')
         names=[str(x.get('name','')) if isinstance(x,dict) else str(x) for x in cards]
         allowed=WAITE if deck in ('waite','day') else MANARA
-        if any(n not in allowed for n in names):
-            raise HTTPException(400,'Недопустимая карта')
+        if len(set(names))!=len(names) or any(n not in allowed for n in names):
+            raise HTTPException(400,'Недопустимые карты')
         premium=(mode=='premium' and deck!='day')
         if not consume_request(uid,premium=premium):
             raise HTTPException(409,'Нет доступных запросов')
         print(f'[MINI] ACCEPT uid={uid} deck={deck} mode={mode} cards={names!r}', flush=True)
         await bot.send_message(uid,'Отправляем ваш запрос во Вселенную... Подождите...')
-        await process_reading(uid,deck,mode,[{'name':n} for n in names],question,premium)
+        task=asyncio.create_task(process_reading(uid,deck,mode,[{'name':n} for n in names],question,premium))
+        _track_reading_task(task)
         return {'ok':True,'accepted':True}
     except HTTPException:
         raise
     except Exception as e:
         print(f'[MINI] ERROR: {type(e).__name__}: {e}', flush=True)
         raise HTTPException(500,'Ошибка обработки расклада')
+
+@app.post('/api/miniapp/fate')
+async def mini_fate(request:Request):
+    try:
+        body=await request.json()
+        tg=validate_init_data(body.get('initData',''))
+        if not tg: raise HTTPException(403,'Недействительный Telegram initData')
+        uid=int(tg['id'])
+        user=db.get(uid)
+        if not user: raise HTTPException(404,'Пользователь не найден')
+        deck=body.get('deck')
+        question=db.get_pending(uid)
+        if not question or question['deck']!=deck or not question['question']:
+            raise HTTPException(409,'Вопрос не найден')
+        if deck not in ('waite','manara','day'):
+            raise HTTPException(400,'Неизвестная колода')
+        mode='premium' if (premium_access(uid) and deck!='day') else 'free'
+        expected=1 if deck=='day' else (9 if mode=='premium' else 3)
+        source=WAITE if deck in ('waite','day') else MANARA
+        raw_ids=body.get('cardIds',[])
+        if not isinstance(raw_ids,list) or len(raw_ids)!=21 or len({str(x) for x in raw_ids})!=21:
+            raise HTTPException(400,'Колода должна содержать 21 уникальную карту')
+        try:
+            card_ids=[int(x) for x in raw_ids]
+        except Exception:
+            raise HTTPException(400,'Некорректные ID карт')
+        if any(i<0 or i>=len(source) for i in card_ids):
+            raise HTTPException(400,'Недопустимая карта')
+        available=[{'id':i,'name':source[i],'image':card_image(deck,i,source[i])} for i in card_ids]
+        available=[x for x in available if x['image']]
+        if len(available) < expected:
+            raise HTTPException(500,'Недостаточно доступных карт')
+        rng=secrets.SystemRandom()
+        chosen=rng.sample(available,expected)
+        names=[x['name'] for x in chosen]
+        premium=(mode=='premium' and deck!='day')
+        if not consume_request(uid,premium=premium):
+            raise HTTPException(409,'Нет доступных запросов')
+        print(f'[FATE] ACCEPT uid={uid} deck={deck} mode={mode} cards={names!r}',flush=True)
+        await bot.send_message(uid,'Судьба выбрала карты ✨ Отправляем ваш запрос во Вселенную...')
+        task=asyncio.create_task(process_reading(uid,deck,mode,[{'name':n} for n in names],question,premium))
+        _track_reading_task(task)
+        return {'ok':True,'accepted':True,'mode':mode,'cards':chosen}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f'[FATE] ERROR: {type(e).__name__}: {e}',flush=True)
+        raise HTTPException(500,'Ошибка выбора карт судьбой')
 
 @app.post('/yookassa/webhook')
 async def yookassa_webhook(request:Request):
@@ -386,9 +444,42 @@ def admin_page():
     prows=''.join(f'<tr><td>{p["created_at"][:19].replace("T"," ")}</td><td>{html.escape(p["name"] or str(p["user_id"]))}</td><td>{p["amount"]} ₽</td><td>{p["requests"]}</td><td>{html.escape(p["status"] or "")}</td></tr>' for p in pays)
     return f'''<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Lilit Admin</title><style>
 body{{margin:0;background:#090816;color:#f5e9c8;font:14px Arial,sans-serif}}.wrap{{max-width:1250px;margin:auto;padding:28px}}h1{{font-weight:500;letter-spacing:1px}}h2{{font-weight:500}}.grid{{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}}.card,section{{background:#15132a;border:1px solid #302a52;border-radius:16px;padding:18px;box-shadow:0 10px 30px #0003}}.num{{font-size:28px;margin-top:8px}}table{{width:100%;border-collapse:collapse;min-width:760px}}.scroll{{overflow:auto}}td,th{{padding:10px;border-bottom:1px solid #292440;text-align:left;white-space:nowrap}}input,textarea,button{{padding:10px;border-radius:9px;border:1px solid #4b416e;background:#0d0c1c;color:#fff}}textarea{{width:100%;min-height:100px}}button{{cursor:pointer;background:#d7bb73;color:#171225;font-weight:bold}}.pill{{display:inline-block;padding:8px 12px;border:1px solid #4b416e;border-radius:999px;margin:4px}}form.row{{display:flex;gap:10px;flex-wrap:wrap}}.muted{{color:#aaa2bc}}</style></head><body><div class="wrap"><h1>Лилит · Панель управления</h1><p class="muted">Один сервер · одна база SQLite · бот + Mini App + платежи</p><div class="grid"><div class="card">Пользователи<div class="num">{s['users']}</div></div><div class="card">Активные 7 дней<div class="num">{s['active']}</div></div><div class="card">Расклады<div class="num">{s['questions']}</div></div><div class="card">Платежи<div class="num">{s['payments']}</div></div><div class="card">Выручка<div class="num">{s['revenue']} ₽</div></div></div><br>
-<section><h2>Начислить запросы</h2><form class="row" method="post" action="/admin/add-requests"><input name="uid" placeholder="Telegram ID" required><input name="amount" type="number" min="1" placeholder="Количество" required><button>Начислить</button></form></section><br>
+<section><h2>Начислить запросы</h2>
+<form class="row" method="post" action="/admin/add-requests"><input name="uid" placeholder="Telegram ID" required><input name="amount" type="number" min="1" placeholder="Количество" required><button>Начислить пользователю</button></form>
+<hr style="border:0;border-top:1px solid #292440;margin:16px 0">
+<form class="row" method="post" action="/admin/add-requests-all" onsubmit="return window.confirm('Начислить запросы всем пользователям?')"><input name="amount" type="number" min="1" value="1" placeholder="Количество" required><button>Начислить всем пользователям</button></form>
+<p class="muted">Это добавляет запросы на общий баланс пользователя. Например, 1 запрос = один бесплатный расклад на 3 карты для пользователя без активной платной подписки.</p>
+</section><br>
 <section><h2>Ручная подписка</h2><p class="muted">Включает человеку режим расклада на 9 карт. Оплата не требуется. Запросы при этом расходуются как обычно.</p><form class="row" method="post" action="/admin/set-subscription"><input name="uid" placeholder="Telegram ID" required><button name="enabled" value="1">Включить подписку</button><button name="enabled" value="0">Отключить подписку</button></form></section><br>
-<section><h2>Рассылка</h2><form method="post" action="/admin/broadcast"><textarea name="text" placeholder="Текст сообщения" required></textarea><br><br><button>Отправить всем пользователям</button></form></section><br>
+<section><h2>📢 Рассылка</h2>
+<p class="muted">Можно отправить сообщение одному пользователю, нескольким выбранным пользователям или готовой группе. Максимум 4096 символов.</p>
+<form method="post" action="/admin/broadcast" onsubmit="return window.confirm('Отправить это сообщение выбранным пользователям?')">
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+<div>
+<label>Кому</label><br>
+<select name="segment" id="broadcast-segment" onchange="toggleIds()" required>
+<option value="selected">Конкретные пользователи</option>
+<option value="all">Все пользователи</option>
+<option value="sambot">Пользователи из Sambot</option>
+<option value="with_requests">У кого есть запросы</option>
+<option value="subscribed">С активной подпиской / платными запросами</option>
+<option value="active_7d">Активные за последние 7 дней</option>
+<option value="no_readings">Кто ещё не делал расклад</option>
+</select>
+</div>
+<div id="ids-box">
+<label>Telegram ID</label><br>
+<input name="ids" id="broadcast-ids" style="width:100%;box-sizing:border-box" placeholder="123456789, 987654321">
+</div>
+<div style="grid-column:1/-1">
+<label>Сообщение</label><br>
+<textarea name="text" id="broadcast-text" maxlength="4096" placeholder="Напиши сообщение клиентам..." required></textarea>
+</div>
+<div style="grid-column:1/-1"><button type="submit">Отправить сообщение</button></div>
+</div>
+</form>
+<p class="muted">Для нескольких пользователей ID можно вставить через запятую, пробел или с новой строки.</p>
+</section><br>
 <section><h2>Источники</h2>{sources}</section><br>
 <section><h2>Последние вопросы</h2><div class="scroll"><table><tr><th>Дата</th><th>Клиент</th><th>Колода</th><th>Вопрос</th></tr>{rrows}</table></div></section><br>
 <section><h2>Платежи</h2><div class="scroll"><table><tr><th>Дата</th><th>Клиент</th><th>Сумма</th><th>Запросы</th><th>Статус</th></tr>{prows}</table></div></section><br>
@@ -407,6 +498,21 @@ async def admin_add(request:Request):
     if not db.get(uid): raise HTTPException(404,'Пользователь не найден')
     db.add(uid,amount); db.event(uid,'admin_add',str(amount)); return HTMLResponse('<meta http-equiv="refresh" content="0;url=/admin">')
 
+@app.post('/admin/add-requests-all')
+async def admin_add_all(request:Request):
+    if not auth_ok(request): raise HTTPException(401,'Unauthorized')
+    form=await request.form()
+    raw_amount=str(form.get('amount','')).strip()
+    if not raw_amount.isdigit() or int(raw_amount) < 1:
+        raise HTTPException(400,'Количество запросов должно быть целым числом не меньше 1')
+    amount=int(raw_amount)
+    with db.conn() as c:
+        ids=[int(r['id']) for r in c.execute('SELECT id FROM users ORDER BY id').fetchall()]
+        c.execute('UPDATE users SET requests=requests+?',(amount,))
+        for uid in ids:
+            c.execute('INSERT INTO events(user_id,event,meta,created_at) VALUES(?,?,?,?)',(uid,'admin_add_all',str(amount),db.now()))
+    return HTMLResponse('<meta http-equiv="refresh" content="0;url=/admin">')
+
 @app.post('/admin/set-subscription')
 async def admin_set_subscription(request:Request):
     if not auth_ok(request): raise HTTPException(401,'Unauthorized')
@@ -423,14 +529,80 @@ async def admin_set_subscription(request:Request):
     db.event(uid,'admin_subscription', 'enabled' if enabled else 'disabled')
     return HTMLResponse('<meta http-equiv="refresh" content="0;url=/admin">')
 
+def _broadcast_targets(segment, raw_ids=''):
+    segment=(segment or 'all').strip()
+    if segment=='selected':
+        parts=re.split(r'[\s,;]+',raw_ids.strip())
+        ids=[]
+        for part in parts:
+            if part:
+                if not part.isdigit():
+                    raise ValueError('Telegram ID должен содержать только цифры')
+                ids.append(int(part))
+        ids=list(dict.fromkeys(ids))
+        if not ids:
+            raise ValueError('Укажите хотя бы один Telegram ID')
+        placeholders=','.join('?' for _ in ids)
+        with db.conn() as c:
+            rows=c.execute(f'SELECT id FROM users WHERE id IN ({placeholders})',ids).fetchall()
+        existing={int(r['id']) for r in rows}
+        missing=[str(x) for x in ids if x not in existing]
+        if missing:
+            raise ValueError('Пользователи не найдены: '+', '.join(missing[:20]))
+        return ids
+    queries={
+        'all':'SELECT id FROM users ORDER BY id',
+        'sambot':"SELECT id FROM users WHERE COALESCE(source,'telegram')='sambot' ORDER BY id",
+        'with_requests':'SELECT id FROM users WHERE requests>0 OR paid_requests>0 ORDER BY id',
+        'subscribed':"SELECT u.id FROM users u WHERE u.paid_requests>0 OR EXISTS (SELECT 1 FROM manual_subscriptions ms WHERE ms.user_id=u.id AND ms.enabled=1) ORDER BY u.id",
+        'active_7d':"SELECT id FROM users WHERE julianday(last_seen)>=julianday('now','-7 days') ORDER BY id",
+        'no_readings':"SELECT u.id FROM users u WHERE NOT EXISTS (SELECT 1 FROM readings r WHERE r.user_id=u.id) ORDER BY u.id",
+    }
+    if segment not in queries:
+        raise ValueError('Неизвестная группа пользователей')
+    with db.conn() as c:
+        return [int(r['id']) for r in c.execute(queries[segment]).fetchall()]
+
+async def _run_broadcast(ids,text_message):
+    sent=failed=0
+    for uid in ids:
+        try:
+            await bot.send_message(uid,text_message)
+            sent+=1
+        except Exception as e:
+            failed+=1
+            print(f'[BROADCAST] Не удалось отправить uid={uid}: {type(e).__name__}: {e}',flush=True)
+        await asyncio.sleep(0.08)
+    print(f'[BROADCAST] DONE total={len(ids)} sent={sent} failed={failed}',flush=True)
+
+def _track_broadcast_task(task):
+    BROADCAST_TASKS.add(task)
+    task.add_done_callback(BROADCAST_TASKS.discard)
+
 @app.post('/admin/broadcast')
 async def broadcast(request:Request):
     if not auth_ok(request): raise HTTPException(401,'Unauthorized')
-    form=await request.form(); text=form.get('text','').strip(); count=0
-    for u in db.users(10000):
-        try: await bot.send_message(u['id'],text); count+=1; await asyncio.sleep(.05)
-        except: pass
-    return {'ok':True,'sent':count}
+    form=await request.form()
+    segment=str(form.get('segment','all')).strip()
+    raw_ids=str(form.get('ids','')).strip()
+    text_message=str(form.get('text','')).strip()
+    if not text_message: raise HTTPException(400,'Введите текст сообщения')
+    if len(text_message)>4096: raise HTTPException(400,'Сообщение длиннее лимита Telegram: максимум 4096 символов')
+    try:
+        ids=_broadcast_targets(segment,raw_ids)
+    except ValueError as e:
+        raise HTTPException(400,str(e))
+    if not ids: raise HTTPException(400,'В выбранной группе нет пользователей')
+    task=asyncio.create_task(_run_broadcast(ids,text_message))
+    _track_broadcast_task(task)
+    print(f'[BROADCAST] START segment={segment} recipients={len(ids)}',flush=True)
+    return HTMLResponse(
+        '<meta charset="utf-8"><meta http-equiv="refresh" content="2;url=/admin">'
+        '<body style="font-family:Arial;background:#090816;color:#f5e9c8;padding:40px">'
+        f'<h2>Рассылка запущена ❤️</h2><p>Получателей: {len(ids)}</p>'
+        '<p>Отправка продолжается в фоне.</p><a href="/admin" style="color:#d7bb73">Вернуться в дашборд</a></body>'
+    )
+
 
 async def main():
     global bot
