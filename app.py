@@ -49,9 +49,9 @@ DECK_NAMES={'waite':'Таро Уэйта','manara':'Таро Манара','day'
 
 def menu():
     return InlineKeyboardMarkup(inline_keyboard=[
-      [InlineKeyboardButton(text='Таро Уэйта',callback_data='deck:waite'),InlineKeyboardButton(text='Таро Манара',callback_data='deck:manara')],
-      [InlineKeyboardButton(text='Карта дня',callback_data='day')],
-      [InlineKeyboardButton(text='Реферальная программа',callback_data='friend')],
+      [InlineKeyboardButton(text='Таро Уэйта 🔮',callback_data='deck:waite'),InlineKeyboardButton(text='Таро Манара 🍓',callback_data='deck:manara')],
+      [InlineKeyboardButton(text='Карта дня 🧘🏼',callback_data='day')],
+      [InlineKeyboardButton(text='Реферальная программа ❤️',callback_data='friend')],
       [InlineKeyboardButton(text='Оформить подписку 🌟',callback_data='pay')]])
 
 def pay_menu():
@@ -62,9 +62,12 @@ def sub_image(): return BASE/'Фото'/'Подписка.jpg'
 
 def bot_url(): return config.PUBLIC_BASE_URL
 
+MINIAPP_VERSION='16'
+
 def mini_url(deck,mode,choice='manual'):
     if not bot_url().startswith('https://'): raise RuntimeError('PUBLIC_BASE_URL должен начинаться с https://')
-    return f'{bot_url()}/miniapp?deck={urllib.parse.quote(deck)}&mode={urllib.parse.quote(mode)}&choice={urllib.parse.quote(choice)}'
+    return (f'{bot_url()}/miniapp?deck={urllib.parse.quote(deck)}&mode={urllib.parse.quote(mode)}'
+            f'&choice={urllib.parse.quote(choice)}&v={MINIAPP_VERSION}')
 
 def mini_buttons(deck,mode):
     manual_text='Получить карту дня' if deck=='day' else 'Получить карты'
@@ -244,7 +247,11 @@ app.mount('/cards',StaticFiles(directory=str(BASE)),name='cards')
 async def health(): return {'ok':True,'service':'lilit-taro'}
 
 @app.get('/miniapp',response_class=HTMLResponse)
-async def miniapp(): return FileResponse(BASE/'web'/'index.html')
+async def miniapp():
+    return FileResponse(
+        BASE/'web'/'index.html',
+        headers={'Cache-Control':'no-store, no-cache, must-revalidate, max-age=0'}
+    )
 
 @app.get('/api/miniapp/config')
 async def mini_config(deck:str='waite'):
@@ -341,9 +348,11 @@ async def mini_select(request:Request):
         question=db.get_pending(uid)
         if not question or question['deck']!=deck or not question['question']:
             raise HTTPException(409,'Вопрос не найден')
+        if deck not in ('waite','manara','day'):
+            raise HTTPException(400,'Неизвестная колода')
         mode='premium' if (premium_access(uid) and deck!='day') else 'free'
         expected=1 if deck=='day' else (9 if mode=='premium' else 3)
-        if deck not in ('waite','manara','day') or len(cards)!=expected:
+        if not isinstance(cards,list) or len(cards)!=expected:
             raise HTTPException(400,'Неверное количество карт')
         names=[str(x.get('name','')) if isinstance(x,dict) else str(x) for x in cards]
         allowed=WAITE if deck in ('waite','day') else MANARA
@@ -353,9 +362,12 @@ async def mini_select(request:Request):
         if not consume_request(uid,premium=premium):
             raise HTTPException(409,'Нет доступных запросов')
         print(f'[MINI] ACCEPT uid={uid} deck={deck} mode={mode} cards={names!r}', flush=True)
-        await bot.send_message(uid,'Отправляем ваш запрос во Вселенную... Подождите...')
         task=asyncio.create_task(process_reading(uid,deck,mode,[{'name':n} for n in names],question,premium))
         _track_reading_task(task)
+        try:
+            await bot.send_message(uid,'Отправляем ваш запрос во Вселенную... Подождите...')
+        except Exception as e:
+            print(f'[MINI] status message error uid={uid}: {type(e).__name__}: {e}', flush=True)
         return {'ok':True,'accepted':True}
     except HTTPException:
         raise
@@ -381,29 +393,22 @@ async def mini_fate(request:Request):
         mode='premium' if (premium_access(uid) and deck!='day') else 'free'
         expected=1 if deck=='day' else (9 if mode=='premium' else 3)
         source=WAITE if deck in ('waite','day') else MANARA
-        raw_ids=body.get('cardIds',[])
-        if not isinstance(raw_ids,list) or len(raw_ids)!=21 or len({str(x) for x in raw_ids})!=21:
-            raise HTTPException(400,'Колода должна содержать 21 уникальную карту')
-        try:
-            card_ids=[int(x) for x in raw_ids]
-        except Exception:
-            raise HTTPException(400,'Некорректные ID карт')
-        if any(i<0 or i>=len(source) for i in card_ids):
-            raise HTTPException(400,'Недопустимая карта')
-        available=[{'id':i,'name':source[i],'image':card_image(deck,i,source[i])} for i in card_ids]
+        available=[{'id':i,'name':name,'image':card_image(deck,i,name)} for i,name in enumerate(source)]
         available=[x for x in available if x['image']]
         if len(available) < expected:
             raise HTTPException(500,'Недостаточно доступных карт')
-        rng=secrets.SystemRandom()
-        chosen=rng.sample(available,expected)
+        chosen=secrets.SystemRandom().sample(available,expected)
         names=[x['name'] for x in chosen]
         premium=(mode=='premium' and deck!='day')
         if not consume_request(uid,premium=premium):
             raise HTTPException(409,'Нет доступных запросов')
         print(f'[FATE] ACCEPT uid={uid} deck={deck} mode={mode} cards={names!r}',flush=True)
-        await bot.send_message(uid,'Судьба выбрала карты ✨ Отправляем ваш запрос во Вселенную...')
         task=asyncio.create_task(process_reading(uid,deck,mode,[{'name':n} for n in names],question,premium))
         _track_reading_task(task)
+        try:
+            await bot.send_message(uid,'Судьба выбрала карты ✨ Отправляем ваш запрос во Вселенную...')
+        except Exception as e:
+            print(f'[FATE] status message error uid={uid}: {type(e).__name__}: {e}', flush=True)
         return {'ok':True,'accepted':True,'mode':mode,'cards':chosen}
     except HTTPException:
         raise
