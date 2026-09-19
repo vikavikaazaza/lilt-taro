@@ -1,53 +1,177 @@
-<!doctype html><html lang="ru"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>Лилит</title><script src="https://telegram.org/js/telegram-web-app.js"></script>
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Лилит</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
-*{box-sizing:border-box}body{margin:0;background:#08091b;color:#ead39b;font-family:Georgia,serif}.app{max-width:760px;margin:auto;padding:16px}.top{text-align:center;margin-bottom:12px}.sub{font:13px Arial;color:#bcae8c;margin-top:5px}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.card{aspect-ratio:.55;perspective:900px;cursor:pointer}.inner{height:100%;position:relative;transform-style:preserve-3d;transition:.55s}.flip .inner{transform:rotateY(180deg)}.face{position:absolute;inset:0;backface-visibility:hidden;border-radius:8px;overflow:hidden;border:1px solid #b89b57}.back{background:#111329 url('/cards/card-back.jpeg') center/100% 100% no-repeat}.front{transform:rotateY(180deg);background:#111}.front img{width:100%;height:100%;object-fit:cover;display:block}.selected{pointer-events:none}.counter{text-align:center;margin:12px;font:12px Arial;color:#d9bd70}.error{text-align:center;color:#e8b8b8;font:14px Arial;margin-top:20px}</style></head><body><main class="app"><div class="top"><div>✦ Выберите карты ✦</div><div class="sub">Нажмите на карты по очереди</div></div><div id="counter" class="counter">Загрузка карт...</div><div id="grid" class="grid"></div></main><script>
-const tg=window.Telegram?.WebApp;if(tg){tg.ready();tg.expand();}
-const p=new URLSearchParams(location.search),deck=p.get('deck')||'waite',mode=p.get('mode')==='premium'?'premium':'free';
-const max=deck==='day'?1:(mode==='premium'?9:3),grid=document.getElementById('grid'),counter=document.getElementById('counter');
+:root{--gold:#d9bd70;--ink:#08091b;--purple:#15132a}
+*{box-sizing:border-box}
+html,body{margin:0;width:100%;height:100%;overflow:hidden}
+body{background:radial-gradient(circle at 50% 10%,#1b1739 0,#0d0d23 42%,#08091b 100%);color:#ead39b;font-family:Georgia,serif}
+.app{height:100dvh;display:flex;flex-direction:column;max-width:760px;margin:auto;padding:clamp(8px,2vw,16px) clamp(8px,3vw,18px) calc(8px + env(safe-area-inset-bottom))}
+.top{text-align:center;flex:0 0 auto}
+.title{font-size:clamp(18px,5vw,26px);letter-spacing:.4px}
+.sub{font:12px Arial,sans-serif;color:#bcae8c;margin-top:4px}
+.counter{text-align:center;margin:8px 0 10px;font:12px Arial,sans-serif;color:var(--gold);min-height:16px}
+.stage{flex:1;min-height:0;display:flex;align-items:center;justify-content:center}
+.grid{width:min(100%,660px);height:min(74dvh,640px);display:grid;grid-template-columns:repeat(7,1fr);grid-template-rows:repeat(3,1fr);gap:clamp(5px,1.2vw,9px)}
+.card{min-width:0;min-height:0;perspective:1000px;cursor:pointer;touch-action:manipulation;filter:drop-shadow(0 6px 10px #0006)}
+.inner{width:100%;height:100%;position:relative;transform-style:preserve-3d;transition:transform .62s cubic-bezier(.2,.75,.2,1)}
+.card.flip .inner{transform:rotateY(180deg)}
+.face{position:absolute;inset:0;backface-visibility:hidden;-webkit-backface-visibility:hidden;border-radius:clamp(6px,1.5vw,10px);overflow:hidden;border:1px solid #b89b57;box-shadow:inset 0 0 0 1px #fff1,0 4px 9px #0006}
+.back{background:#111329 url('/cards/card-back.jpeg') center/100% 100% no-repeat}
+.front{transform:rotateY(180deg);background:#111}
+.front img{width:100%;height:100%;object-fit:cover;display:block}
+.card.chosen{pointer-events:none}
+.card.chosen .front{box-shadow:0 0 0 2px var(--gold),0 0 18px #d9bd7066}
+.shuffle .card{animation:shuffle .75s ease-in-out infinite alternate}
+.shuffle .card:nth-child(2n){animation-delay:-.11s}.shuffle .card:nth-child(3n){animation-delay:-.23s}.shuffle .card:nth-child(5n){animation-delay:-.37s}
+@keyframes shuffle{from{transform:translateY(0) rotate(-1deg) scale(1)}to{transform:translateY(-7px) rotate(1deg) scale(1.03)}}
+.fate-glow{animation:pulse 1.1s ease-in-out infinite alternate}
+@keyframes pulse{from{opacity:.72;text-shadow:0 0 6px #d9bd7033}to{opacity:1;text-shadow:0 0 18px #d9bd7099}}
+.error{text-align:center;color:#e8b8b8;font:14px Arial,sans-serif}
+@media (max-height:700px){.grid{height:min(67dvh,520px)}.counter{margin:5px 0 6px}.title{font-size:18px}}
+</style>
+</head>
+<body>
+<main class="app">
+  <div class="top">
+    <div id="title" class="title">✦ Выберите карты ✦</div>
+    <div id="sub" class="sub">Перед вами 21 карта. Нажмите на нужные карты.</div>
+  </div>
+  <div id="counter" class="counter">Загрузка карт...</div>
+  <div class="stage"><div id="grid" class="grid"></div></div>
+</main>
+<script>
+const tg=window.Telegram?.WebApp;
+if(tg){tg.ready();tg.expand();}
+
+const p=new URLSearchParams(location.search);
+const deck=p.get('deck')||'waite';
+const mode=p.get('mode')==='premium'?'premium':'free';
+const choice=p.get('choice')==='fate'?'fate':'manual';
+const max=deck==='day'?1:(mode==='premium'?9:3);
+const grid=document.getElementById('grid');
+const counter=document.getElementById('counter');
+const title=document.getElementById('title');
+const sub=document.getElementById('sub');
 let submitting=false;
-function submitAndClose(cards){
- if(submitting)return; submitting=true;
- counter.textContent='Карты выбраны ✨';
- const payload=JSON.stringify({initData:tg?.initData||'',deck,mode,cards});
- let sent=false;
- try{
-   if(navigator.sendBeacon){
-     sent=navigator.sendBeacon('/api/miniapp/select',new Blob([payload],{type:'application/json'}));
-   }
- }catch(e){console.error(e);}
- if(!sent){
-   try{fetch('/api/miniapp/select',{method:'POST',headers:{'Content-Type':'application/json'},body:payload,keepalive:true}).catch(e=>console.error(e));}
-   catch(e){console.error(e);}
- }
- // Не ждём ответ CHAD: сервер продолжает обработку, а Mini App закрывается сразу после последнего переворота.
- setTimeout(()=>{try{if(tg){tg.close();}else{window.close();}}catch(e){console.error(e);}},700);
+
+function closeMiniApp(){
+  setTimeout(()=>{
+    try{if(tg){tg.close();}else{window.close();}}catch(e){console.error(e);}
+  },500);
 }
-async function loadCards(){
- try{
-  const r=await fetch('/api/miniapp/config?deck='+encodeURIComponent(deck),{cache:'no-store'});
-  if(!r.ok)throw Error('HTTP '+r.status);
-  const data=await r.json(),all=data.cards||[];
-  const cards=all.filter(x=>x.image);
-  if(!cards.length)throw Error('no cards');
-  counter.textContent=`Выбрано: 0 / ${max}`;
-  const selected=[];
-  cards.sort(()=>Math.random()-.5).forEach(card=>{
-   const e=document.createElement('div');e.className='card';
-   e.innerHTML=`<div class="inner"><div class="face back"></div><div class="face front"><img src="${card.image}" alt="${String(card.name).replace(/"/g,'&quot;')}"></div></div>`;
-   e.onclick=()=>{
-    if(submitting||selected.length>=max||selected.some(x=>x.id===card.id))return;
-    selected.push({id:card.id,name:card.name});e.classList.add('flip','selected');
-    counter.textContent=`Выбрано: ${selected.length} / ${max}`;
-    if(selected.length===max){
-      counter.textContent='Последняя карта открывается… ✨';
-      setTimeout(()=>submitAndClose(selected),1900);
+
+function sendManual(cards){
+  if(submitting)return;
+  submitting=true;
+  counter.textContent='Карты выбраны ✨';
+  const payload=JSON.stringify({initData:tg?.initData||'',deck,mode,cards});
+  let sent=false;
+  try{
+    if(navigator.sendBeacon){
+      sent=navigator.sendBeacon('/api/miniapp/select',new Blob([payload],{type:'application/json'}));
     }
-   };
-   grid.appendChild(e);
-  });
- }catch(e){counter.innerHTML='<div class="error">Не удалось загрузить карты</div>';console.error(e);}
+  }catch(e){console.error(e);}
+  if(!sent){
+    try{fetch('/api/miniapp/select',{method:'POST',headers:{'Content-Type':'application/json'},body:payload,keepalive:true}).catch(e=>console.error(e));}
+    catch(e){console.error(e);}
+  }
+  closeMiniApp();
 }
+
+async function sendFate(cardIds){
+  try{
+    const r=await fetch('/api/miniapp/fate',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({initData:tg?.initData||'',deck,mode,cardIds})
+    });
+    if(!r.ok)throw Error('HTTP '+r.status);
+    const data=await r.json();
+    if(!data.ok || !Array.isArray(data.cards))throw Error('Неверный ответ сервера');
+    const chosen=data.cards;
+    counter.innerHTML='<span class="fate-glow">Судьба выбирает карты… ✨</span>';
+    const chosenIds=chosen.map(x=>Number(x.id));
+    const els=[];
+    for(const id of chosenIds){
+      const el=document.querySelector('[data-id="'+id+'"]');
+      if(el)els.push({el,id});
+    }
+    for(let i=0;i<els.length;i++){
+      await new Promise(resolve=>setTimeout(resolve,i===0?350:520));
+      els[i].el.classList.add('flip','chosen');
+    }
+    counter.textContent=deck==='day'?'Карта судьбы открыта ✨':`Выпало карт: ${els.length} ✨`;
+    await new Promise(resolve=>setTimeout(resolve,1100));
+    closeMiniApp();
+  }catch(e){
+    console.error(e);
+    submitting=false;
+    counter.innerHTML='<div class="error">Не удалось довериться судьбе. Попробуйте ещё раз.</div>';
+  }
+}
+
+async function loadCards(){
+  try{
+    const r=await fetch('/api/miniapp/config?deck='+encodeURIComponent(deck),{cache:'no-store'});
+    if(!r.ok)throw Error('HTTP '+r.status);
+    const data=await r.json();
+    const all=(data.cards||[]).filter(x=>x.image);
+    if(all.length<21)throw Error('Недостаточно карт с изображениями');
+
+    const deck21=all.slice().sort(()=>Math.random()-.5).slice(0,21);
+    const selected=[];
+    grid.innerHTML='';
+
+    if(choice==='fate'){
+      title.textContent='✦ Доверьтесь судьбе ✦';
+      sub.textContent='Карты перемешиваются… ничего нажимать не нужно.';
+      counter.innerHTML='<span class="fate-glow">Судьба готовит расклад… ✨</span>';
+    }else{
+      title.textContent='✦ Выберите карты ✦';
+      sub.textContent=deck==='day'?'Нажмите на одну карту':'Нажмите на карты по очереди';
+      counter.textContent=`Выбрано: 0 / ${max}`;
+    }
+
+    deck21.forEach((card,index)=>{
+      const e=document.createElement('div');
+      e.className='card';
+      e.dataset.id=String(card.id);
+      e.innerHTML=`<div class="inner"><div class="face back"></div><div class="face front"><img src="${card.image}" alt="${String(card.name).replace(/"/g,'&quot;')}"></div></div>`;
+      if(choice==='manual'){
+        e.onclick=()=>{
+          if(submitting||selected.length>=max)return;
+          if(selected.some(x=>x.id===card.id))return;
+          selected.push({id:card.id,name:card.name});
+          e.classList.add('flip','chosen');
+          counter.textContent=`Выбрано: ${selected.length} / ${max}`;
+          if(selected.length===max){
+            submitting=true;
+            counter.textContent='Последняя карта открывается… ✨';
+            setTimeout(()=>sendManual(selected),850);
+          }
+        };
+      }
+      grid.appendChild(e);
+    });
+
+    if(choice==='fate'){
+      grid.classList.add('shuffle');
+      await new Promise(resolve=>setTimeout(resolve,2350));
+      grid.classList.remove('shuffle');
+      submitting=true;
+      await sendFate(deck21.map(x=>x.id));
+    }
+  }catch(e){
+    console.error(e);
+    counter.innerHTML='<div class="error">Не удалось загрузить карты</div>';
+  }
+}
+
 loadCards();
-</script></body></html>
+</script>
+</body>
+</html>
