@@ -70,7 +70,7 @@ def mini_url(deck,mode,choice='manual'):
             f'&choice={urllib.parse.quote(choice)}&v={MINIAPP_VERSION}')
 
 def mini_buttons(deck,mode):
-    manual_text='Получить карту дня' if deck=='day' else 'Получить карты'
+    manual_text='Вытянуть карту дня' if deck=='day' else 'Вытянуть карты'
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=manual_text,web_app=WebAppInfo(url=mini_url(deck,mode,'manual')))],
         [InlineKeyboardButton(text='Довериться судьбе ✨',web_app=WebAppInfo(url=mini_url(deck,mode,'fate')))]
