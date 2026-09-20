@@ -43,6 +43,16 @@ def init():
         CREATE TABLE IF NOT EXISTS manual_subscriptions(
           user_id INTEGER PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 1, granted_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS messages(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL,
+          role TEXT NOT NULL,
+          text TEXT NOT NULL,
+          message_type TEXT NOT NULL DEFAULT 'text',
+          meta TEXT DEFAULT '',
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_messages_user_created ON messages(user_id, created_at, id);
         ''')
         # Upgrade older databases safely.
         cols={r['name'] for r in c.execute('PRAGMA table_info(users)').fetchall()}
@@ -90,6 +100,26 @@ def touch(uid):
 def event(uid,event,meta=''):
     with conn() as c: c.execute('INSERT INTO events(user_id,event,meta,created_at) VALUES(?,?,?,?)',(uid,event,meta,now()))
 
+def log_message(uid, role, text, message_type='text', meta=''):
+    text='' if text is None else str(text)
+    with conn() as c:
+        c.execute('INSERT INTO messages(user_id,role,text,message_type,meta,created_at) VALUES(?,?,?,?,?,?)',(int(uid),str(role),text,str(message_type),str(meta or ''),now()))
+
+def user_messages(uid, limit=2000):
+    with conn() as c:
+        return c.execute('SELECT * FROM messages WHERE user_id=? ORDER BY created_at ASC, id ASC LIMIT ?',(int(uid),int(limit))).fetchall()
+
+def user_readings(uid, limit=500):
+    with conn() as c:
+        return c.execute('SELECT * FROM readings WHERE user_id=? ORDER BY created_at ASC, id ASC LIMIT ?',(int(uid),int(limit))).fetchall()
+
+def user_payments(uid, limit=200):
+    with conn() as c:
+        return c.execute('SELECT * FROM payments WHERE user_id=? ORDER BY created_at DESC, id DESC LIMIT ?',(int(uid),int(limit))).fetchall()
+
+def user_events(uid, limit=500):
+    with conn() as c:
+        return c.execute('SELECT * FROM events WHERE user_id=? ORDER BY created_at DESC, id DESC LIMIT ?',(int(uid),int(limit))).fetchall()
 def set_pending(uid,deck,mode,question):
     with conn() as c: c.execute('INSERT INTO pending(user_id,deck,mode,question,created_at) VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET deck=excluded.deck,mode=excluded.mode,question=excluded.question,created_at=excluded.created_at',(uid,deck,mode,question,now()))
 
