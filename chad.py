@@ -193,7 +193,7 @@ TRANSIT_SYSTEM_PROMPT = '''
 10. Итог
 Дай короткий, очень конкретный вывод: на что человеку смотреть в ближайшее время и какой сценарий сейчас наиболее заметен по карте.
 
-Ответ должен быть содержательным, но компактным: примерно 2500–3200 символов. Не повторяй одну мысль в нескольких разделах.
+Ответ должен быть содержательным, но компактным: не более 3500 символов. Старайся уложиться примерно в 3000–3300 символов, чтобы итог не обрывался техническим ограничением. Не повторяй одну мысль в нескольких разделах.
 
 Если время рождения неизвестно, не интерпретируй дома и Асцендент и обязательно учитывай, что положение натальной Луны приблизительное.
 '''.strip()
@@ -207,6 +207,22 @@ def _clean_transit_answer(text):
     return text.strip()
 
 
+def _limit_transit_answer(text, max_chars=3500):
+    text=str(text or '').strip()
+    if len(text) <= max_chars:
+        return text
+
+    # Обрезаем по естественной границе, чтобы не разрывать слово или абзац.
+    cut=text.rfind('\n\n', 0, max_chars - 1)
+    if cut < 2500:
+        cut=text.rfind('\n', 0, max_chars - 1)
+    if cut < 2500:
+        cut=text.rfind(' ', 0, max_chars - 1)
+    if cut < 1:
+        cut=max_chars - 1
+    return text[:cut].rstrip() + '…'
+
+
 async def ask_transit(calculation_text):
     if not CHAD_API_URL:
         raise RuntimeError('Не заполнен CHAD_API_URL')
@@ -217,7 +233,7 @@ async def ask_transit(calculation_text):
         'Интерпретируй только эти данные и ничего не пересчитывай.\n\n'
         + calculation_text
     )
-    timeout=aiohttp.ClientTimeout(total=305, connect=20, sock_connect=20, sock_read=300)
+    timeout=aiohttp.ClientTimeout(total=125, connect=20, sock_connect=20, sock_read=120)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         payload={
             'message':user_message,
@@ -244,4 +260,4 @@ async def ask_transit(calculation_text):
                 answer=body.strip()
             if not str(answer).strip():
                 raise RuntimeError('CHAD API вернул пустую интерпретацию транзитов')
-            return _clean_transit_answer(answer)
+            return _limit_transit_answer(_clean_transit_answer(answer), 3500)
