@@ -103,7 +103,8 @@ def _planet_positions(jd_ut: float) -> dict[str, dict[str, Any]]:
     flags = swe.FLG_SWIEPH | swe.FLG_SPEED
     out: dict[str, dict[str, Any]] = {}
     for name, body in PLANETS:
-        xx, _ = swe.calc_ut(jd_ut, body, flags)
+        calc_result = swe.calc_ut(jd_ut, body, flags)
+        xx = calc_result[0]
         lon = normalize_deg(float(xx[0]))
         speed = float(xx[3])
         sign, _, sign_deg = sign_info(lon)
