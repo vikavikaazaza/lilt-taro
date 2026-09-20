@@ -15,7 +15,7 @@ body{overflow-x:hidden}.app{max-width:680px;margin:0 auto;padding:22px 16px 28px
 .city-wrap{position:relative}.suggestions{position:absolute;left:0;right:0;top:100%;margin-top:6px;z-index:20;background:#0d0c1c;border:1px solid #4b416e;border-radius:13px;overflow:hidden;box-shadow:0 18px 40px rgba(0,0,0,.4)}.suggestion{padding:12px 14px;color:#eee5d1;border-bottom:1px solid #26203a;cursor:pointer;line-height:1.3}.suggestion:last-child{border-bottom:0}.suggestion:active{background:#17132a}
 .quick{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}.quick button,.check{border:1px solid #4b416e;background:#0d0c1c;color:#cfc4dd;border-radius:10px;padding:9px 12px;font-size:13px}.quick button:active{transform:translateY(1px)}
 .checkline{display:flex;align-items:center;gap:9px;color:#cfc4dd;font-size:14px;margin-top:9px}.checkline input{width:18px;height:18px;accent-color:#d7bb73}
-.actions{margin-top:18px}.submit{width:100%;border:0;border-radius:14px;padding:14px 16px;font-size:16px;font-weight:700;background:linear-gradient(90deg,#d7bb73,#b99844);color:#171225;cursor:pointer}.submit:disabled{opacity:.55;cursor:default}.status{margin-top:12px;min-height:21px;color:#aaa2bc;font-size:13px;line-height:1.45}.hint{margin-top:15px;padding:12px 13px;border-radius:13px;background:#0d0c1c;border:1px solid #292440;color:#aaa2bc;font-size:12px;line-height:1.45}
+.aspect-box{padding-top:4px}.aspects{margin-top:10px;display:grid;gap:8px}.aspect{padding:10px 11px;border:1px solid #302a52;border-radius:12px;background:#0d0c1c;line-height:1.4;color:#e8dfd1}.aspect small{display:block;color:#8f879f;margin-top:3px}.actions{margin-top:18px}.submit{width:100%;border:0;border-radius:14px;padding:14px 16px;font-size:16px;font-weight:700;background:linear-gradient(90deg,#d7bb73,#b99844);color:#171225;cursor:pointer}.submit:disabled{opacity:.55;cursor:default}.status{margin-top:12px;min-height:21px;color:#aaa2bc;font-size:13px;line-height:1.45}.hint{margin-top:15px;padding:12px 13px;border-radius:13px;background:#0d0c1c;border:1px solid #292440;color:#aaa2bc;font-size:12px;line-height:1.45}
 @media(max-width:560px){.app{padding:16px 12px 22px}.title{font-size:25px}.card{padding:15px}.row{grid-template-columns:1fr}.input{font-size:16px}}
 </style>
 </head>
@@ -42,6 +42,11 @@ body{overflow-x:hidden}.app{max-width:680px;margin:0 auto;padding:22px 16px 28px
       <input id="transit-date" class="input" type="date" min="1900-01-01" max="2200-12-31" required>
       <div class="quick"><button type="button" data-offset="0">Сегодня</button><button type="button" data-offset="1">Завтра</button><button type="button" data-offset="7">Через неделю</button></div>
     </div>
+    <div class="field aspect-box">
+      <div class="section-title" style="margin-bottom:10px">Аспекты на выбранную дату</div>
+      <button id="preview" class="check" type="button">Показать аспекты</button>
+      <div id="aspects" class="aspects"></div>
+    </div>
     <div class="actions"><button id="submit" class="submit" type="button">Рассчитать транзиты</button><div id="status" class="status"></div><div class="hint">Один расчёт использует 1 запрос. Если время рождения неизвестно, дома и Асцендент не рассчитываются, а положение натальной Луны считается приблизительно.</div><div style="margin-top:10px;font-size:11px;color:#77718a">Поиск города: © OpenStreetMap contributors</div></div>
   </div>
 </main>
@@ -57,6 +62,8 @@ const cityInput=document.getElementById('city');
 const suggestions=document.getElementById('suggestions');
 const transitDate=document.getElementById('transit-date');
 const submit=document.getElementById('submit');
+const preview=document.getElementById('preview');
+const aspectsBox=document.getElementById('aspects');
 const status=document.getElementById('status');
 let selectedCity=null, searchTimer=null, submitting=false;
 
@@ -118,16 +125,42 @@ document.addEventListener('click',(e)=>{if(!e.target.closest('.city-wrap'))sugge
 function showStatus(text){status.textContent=text;}
 function haptic(kind='light'){try{tg?.HapticFeedback?.impactOccurred?.(kind)}catch(e){}}
 function closeApp(){try{tg?.close?.()}catch(e){}}
+function stateText(v){if(v==='сходящийся')return 'Тема набирает силу';if(v==='точный')return 'Пик влияния';if(v==='расходящийся')return 'Идут последствия или развязка';return ''}
+function validateForm(){
+  if(!initData){showStatus('Открой приложение из Telegram.');return false;}
+  if(!birthDate.value){showStatus('Укажи дату рождения.');return false;}
+  if(!unknownTime.checked&&!birthTime.value){showStatus('Укажи время рождения или выбери «Не знаю время».');return false;}
+  if(!cityInput.value.trim()){showStatus('Укажи город рождения.');return false;}
+  if(!selectedCity){showStatus('Выбери город из найденных вариантов.');return false;}
+  if(!transitDate.value){showStatus('Укажи дату транзита.');return false;}
+  return true;
+}
+
+preview.addEventListener('click',async()=>{
+  if(!validateForm())return;
+  preview.disabled=true;preview.textContent='Считаю аспекты…';aspectsBox.innerHTML='';
+  const payload={initData,birth_date:birthDate.value,birth_time:unknownTime.checked?'':birthTime.value,time_known:!unknownTime.checked,transit_date:transitDate.value,city:selectedCity.display_name,lat:selectedCity.lat,lon:selectedCity.lon};
+  try{
+    const r=await fetch('/api/transits/preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const data=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(data.detail||'Не удалось рассчитать аспекты');
+    if(!(data.aspects||[]).length){aspectsBox.innerHTML='<div class="aspect">Значимых аспектов в заданном орбисе на эту дату не найдено.</div>';return;}
+    for(const a of data.aspects){
+      const el=document.createElement('div');el.className='aspect';
+      const house=a.house?` · дом ${a.house}`:'';
+      const retro=a.transit_retrograde?' · ретроградный транзит':'';
+      el.innerHTML=`${a.transit_planet} ${a.aspect} натальный ${a.natal_planet}<small>Орб ${a.orb_text} · ${stateText(a.state)}${house}${retro}</small>`;
+      aspectsBox.appendChild(el);
+    }
+    showStatus('Аспекты рассчитаны. Ниже — самые точные влияния на выбранную дату.');
+  }catch(e){console.error(e);showStatus(e.message||'Не удалось рассчитать аспекты.');}
+  finally{preview.disabled=false;preview.textContent='Показать аспекты';}
+});
 
 submit.addEventListener('click',async()=>{
   if(submitting)return;
-  if(!initData){showStatus('Открой приложение из Telegram.');return;}
-  if(!birthDate.value){showStatus('Укажи дату рождения.');return;}
-  if(!unknownTime.checked&&!birthTime.value){showStatus('Укажи время рождения или выбери «Не знаю время».');return;}
-  if(!cityInput.value.trim()){showStatus('Укажи город рождения.');return;}
-  if(!selectedCity){showStatus('Выбери город из подсказок, чтобы мы точно определили координаты.');return;}
-  if(!transitDate.value){showStatus('Укажи дату транзита.');return;}
-  submitting=true;submit.disabled=true;showStatus('Считаю твою дату и готовлю персональную интерпретацию…');haptic('medium');
+  if(!validateForm())return;
+  submitting=true;submit.disabled=true;showStatus('Данные приняты. Открываем расчёт натальной карты…');haptic('medium');
   const payload={initData,birth_date:birthDate.value,birth_time:unknownTime.checked?'':birthTime.value,time_known:!unknownTime.checked,transit_date:transitDate.value,city:selectedCity.display_name,lat:selectedCity.lat,lon:selectedCity.lon};
   try{
     const r=await fetch('/api/transits/calculate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
