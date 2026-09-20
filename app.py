@@ -2,7 +2,7 @@ import asyncio, hashlib, hmac, html, json, secrets, urllib.parse, re
 from pathlib import Path
 from typing import Optional
 
-from aiogram import Bot, Dispatcher, F, Router, types
+from aiogram import Bot, Dispatcher, F, Router, types, BaseMiddleware
 from aiogram.filters import Command, CommandStart
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile, WebAppInfo
 from fastapi import FastAPI, Request, HTTPException
@@ -18,6 +18,33 @@ router=Router()
 bot: Bot
 BROADCAST_TASKS=set()
 READING_TASKS=set()
+
+class DialogueMiddleware(BaseMiddleware):
+    async def __call__(self, handler, event, data):
+        if isinstance(event, types.Message) and event.from_user:
+            text=event.text or event.caption
+            if not text:
+                text=f'[{getattr(event, "content_type", "message")}]'
+            try:
+                db.log_message(event.from_user.id,'user',text,getattr(event,'content_type','text'))
+            except Exception as e:
+                print(f'[DIALOGUE] incoming log error: {type(e).__name__}: {e}',flush=True)
+        return await handler(event,data)
+
+router.message.middleware(DialogueMiddleware())
+
+async def answer_user(m,text,**kwargs):
+    db.log_message(int(m.chat.id),'bot',text,'text')
+    return await m.answer(text,**kwargs)
+
+async def answer_user_photo(m,photo,caption=None,**kwargs):
+    if caption:
+        db.log_message(int(m.chat.id),'bot',caption,'photo')
+    return await m.answer_photo(photo,caption=caption,**kwargs)
+
+async def send_user_message(uid,text,**kwargs):
+    db.log_message(int(uid),'bot',text,'text')
+    return await bot.send_message(uid,text,**kwargs)
 
 
 def has_manual_subscription(uid):
@@ -80,28 +107,28 @@ async def main_menu(m):
     u=db.get(m.from_user.id); left=(int(u['requests']) if u else 0)+(int(u['paid_requests']) if u else 0)
     text='Добро пожаловать в пространство магии 🌙️\n\nЗдесь вы можете спросить о чём угодно — найдете ответ на любой вопрос 🕯️\n\nКарты ждут вас ☀️\n\nВаше количество запросов: '+str(left)
     p=main_image()
-    if p.is_file(): await m.answer_photo(FSInputFile(p),caption=text,reply_markup=menu())
-    else: await m.answer(text,reply_markup=menu())
+    if p.is_file(): await answer_user_photo(m, FSInputFile(p),caption=text,reply_markup=menu())
+    else: await answer_user(m, text,reply_markup=menu())
 
 async def subscription(m):
     text='🌟 Разгадай больше секретов с подпиской 🌟\n\nПреимущества:\n🔥 С подпиской ответы больше и детальнее\n🔥 Расклад не из трех, а из девяти карт\n🔥 Полное погружение в вашу ситуацию\n\nЖдем тебя в нашем эксклюзивном сообществе ❤️'
     p=sub_image()
-    if p.is_file(): await m.answer_photo(FSInputFile(p),caption=text,reply_markup=pay_menu())
-    else: await m.answer(text,reply_markup=pay_menu())
+    if p.is_file(): await answer_user_photo(m, FSInputFile(p),caption=text,reply_markup=pay_menu())
+    else: await answer_user(m, text,reply_markup=pay_menu())
 
 async def day_start(m):
     u=db.get(m.from_user.id)
     if not u or int(u['requests'])+int(u['paid_requests'])<=0:
-        await m.answer('У вас осталось 0 запросов.')
+        await answer_user(m, 'У вас осталось 0 запросов.')
         await subscription(m)
         return
     db.set_pending(m.from_user.id,'day','free','Карта дня')
-    await m.answer('Начинаем гадание, переходим к карте дня. 🧘🏼',reply_markup=mini_buttons('day','free'))
+    await answer_user(m, 'Начинаем гадание, переходим к карте дня. 🧘🏼',reply_markup=mini_buttons('day','free'))
 
 async def deck_start(m,deck):
     mode='premium' if premium_access(m.from_user.id) else 'free'
     db.set_pending(m.from_user.id,deck,mode,'')
-    await m.answer(f'Давай погадаем на {DECK_NAMES[deck]}\n\nСформулируй свой вопрос и напиши его полностью ❤️\n\nНапример: Что ждет меня в следующем месяце?')
+    await answer_user(m, f'Давай погадаем на {DECK_NAMES[deck]}\n\nСформулируй свой вопрос и напиши его полностью ❤️\n\nНапример: Что ждет меня в следующем месяце?')
 
 @router.message(CommandStart())
 async def start(m:types.Message):
@@ -115,7 +142,7 @@ async def start(m:types.Message):
             source='instagram'
         db.user(m.from_user,source,referrer)
         if referrer:
-            db.add(referrer,1); db.event(referrer,'referral_success',str(m.from_user.id)); await bot.send_message(referrer,'❤️ Вам начислен 1 бесплатный запрос за нового друга!')
+            db.add(referrer,1); db.event(referrer,'referral_success',str(m.from_user.id)); await send_user_message(referrer,'❤️ Вам начислен 1 бесплатный запрос за нового друга!')
     else:
         db.user(m.from_user,existing['source'] or 'telegram',existing['referrer_id'])
     db.event(m.from_user.id,'start',source if not existing else 'return')
@@ -124,7 +151,7 @@ async def start(m:types.Message):
 @router.message(Command('friend'))
 async def friend(m): await friend_show(m)
 async def friend_show(m):
-    await m.answer('Создавай ссылку для своих друзей и делись ею! За каждого приведенного друга дарим тебе 1 бесплатный запрос ❤️ Действуй 🔮',reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='Создать ссылку',callback_data='ref:create')]]))
+    await answer_user(m, 'Создавай ссылку для своих друзей и делись ею! За каждого приведенного друга дарим тебе 1 бесплатный запрос ❤️ Действуй 🔮',reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='Создать ссылку',callback_data='ref:create')]]))
 
 @router.message(Command('pay'))
 async def pay_cmd(m): await subscription(m)
@@ -185,12 +212,12 @@ async def text_message(m):
     if p['deck']=='payment':
         import re
         email=m.text.strip()
-        if not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+',email): await m.answer('Пожалуйста, введи корректную почту.'); return
+        if not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+',email): await answer_user(m, 'Пожалуйста, введи корректную почту.'); return
         await create_payment(m,int(p['mode']),email); db.clear_pending(m.from_user.id); return
     # question
     u=db.get(m.from_user.id); total=int(u['requests'])+int(u['paid_requests'])
     if total<=0:
-        await m.answer('У вас осталось 0 запросов.')
+        await answer_user(m, 'У вас осталось 0 запросов.')
         await subscription(m); return
     mode='premium' if premium_access(m.from_user.id) else 'free'
     deck=p['deck']; db.set_pending(m.from_user.id,deck,mode,m.text)
@@ -198,9 +225,9 @@ async def text_message(m):
     await send_admin_question(m,deck,m.text)
     if deck=='day':
         db.set_pending(m.from_user.id,'day','free',m.text)
-        await m.answer('Начинаем гадание, переходим к карте дня. 🧘🏼',reply_markup=mini_buttons('day','free'))
+        await answer_user(m, 'Начинаем гадание, переходим к карте дня. 🧘🏼',reply_markup=mini_buttons('day','free'))
     else:
-        await m.answer('Начинаем гадание, выбирай карты или доверься судьбе ✨',reply_markup=mini_buttons(deck,mode))
+        await answer_user(m, 'Начинаем гадание, выбирай карты или доверься судьбе ✨',reply_markup=mini_buttons(deck,mode))
 
 def match_waite(q):
     norm=' '.join(q.lower().replace('ё','е').split())
@@ -225,7 +252,7 @@ async def send_admin_question(m,deck,q):
 # YooKassa
 async def create_payment(m,n,email):
     if not config.YOOKASSA_SECRET_KEY or not config.PUBLIC_BASE_URL.startswith('https://'):
-        await m.answer('Оплата пока не настроена: проверьте YOOKASSA_SECRET_KEY и PUBLIC_BASE_URL в .env.'); return
+        await answer_user(m, 'Оплата пока не настроена: проверьте YOOKASSA_SECRET_KEY и PUBLIC_BASE_URL в .env.'); return
     from yookassa import Configuration, Payment
     Configuration.account_id=config.YOOKASSA_SHOP_ID; Configuration.secret_key=config.YOOKASSA_SECRET_KEY
     idem=secrets.token_hex(16); amount=config.PACKAGES[n]
@@ -242,7 +269,7 @@ async def create_payment(m,n,email):
     },idem)
     db.payment(m.from_user.id,payment.id,amount,n,'pending',email); db.event(m.from_user.id,'payment_created',str(payment.id))
     print(f'[PAYMENT] CREATED uid={m.from_user.id} payment_id={payment.id} amount={amount} requests={n}', flush=True)
-    await m.answer(f'Перейдите к оплате: {payment.confirmation.confirmation_url}')
+    await answer_user(m, f'Перейдите к оплате: {payment.confirmation.confirmation_url}')
 
 async def _payment_find(payment_id):
     from yookassa import Configuration, Payment
@@ -280,7 +307,7 @@ async def _settle_yookassa_payment(payment_obj):
             if config.ADMIN_CHAT_ID:
                 u=db.get(uid); username=f'@{u["username"]}' if u and u['username'] else '—'
                 await bot.send_message(config.ADMIN_CHAT_ID, f'🔥 КЛИЕНТ ОПЛАТИЛ 🔥\n\n🕯️ Имя: {u["name"] if u else uid}\n🕯️ Ник: {username}\n🕯️ Сумма: {amount} рублей\n🕯️ Запросы: {n}')
-            await bot.send_message(uid,f'Оплата прошла успешно ❤️\nВам доступно {n} новых запросов.')
+            await send_user_message(uid,f'Оплата прошла успешно ❤️\nВам доступно {n} новых запросов.')
         except Exception as e:
             print(f'[PAYMENT] notification error uid={uid}: {type(e).__name__}: {e}', flush=True)
     return added,row
@@ -390,15 +417,15 @@ async def process_reading(uid, deck, mode, cards, question, premium):
         # starts another reading without requiring the user to press a deck button again.
         next_mode='premium' if premium_access(uid) and deck!='day' else 'free'
         db.set_pending(uid,deck,next_mode,'')
-        await bot.send_message(uid,answer)
-        await bot.send_message(uid,f'Ваше количество запросов: {left}\n\nЗадайте свой вопрос ❤️')
+        await send_user_message(uid,answer)
+        await send_user_message(uid,f'Ваше количество запросов: {left}\n\nЗадайте свой вопрос ❤️')
         print(f'[READING] DONE uid={uid} left={left}', flush=True)
     except Exception as e:
         print(f'[READING] ERROR uid={uid}: {type(e).__name__}: {e}', flush=True)
         try:
             db.add(uid,1)
             db.clear_pending(uid)
-            await bot.send_message(uid,'Не удалось получить расшифровку прямо сейчас. Запрос возвращён на баланс. Попробуйте ещё раз немного позже.')
+            await send_user_message(uid,'Не удалось получить расшифровку прямо сейчас. Запрос возвращён на баланс. Попробуйте ещё раз немного позже.')
         except Exception as inner:
             print(f'[READING] RECOVERY ERROR uid={uid}: {type(inner).__name__}: {inner}', flush=True)
 
@@ -451,7 +478,7 @@ async def mini_select(request:Request):
         task=asyncio.create_task(process_reading(uid,deck,mode,[{'id':i,'name':n} for i,n in zip(ids,names)],question,premium))
         _track_reading_task(task)
         try:
-            await bot.send_message(uid,'Отправляем ваш запрос во Вселенную... Подождите...')
+            await send_user_message(uid,'Отправляем ваш запрос во Вселенную... Подождите...')
         except Exception as e:
             print(f'[MINI] status message error uid={uid}: {type(e).__name__}: {e}', flush=True)
         return {'ok':True,'accepted':True}
@@ -493,7 +520,7 @@ async def mini_fate(request:Request):
         task=asyncio.create_task(process_reading(uid,deck,mode,[{'name':n} for n in names],question,premium))
         _track_reading_task(task)
         try:
-            await bot.send_message(uid,'Судьба выбрала карты ✨ Отправляем ваш запрос во Вселенную...')
+            await send_user_message(uid,'Судьба выбрала карты ✨ Отправляем ваш запрос во Вселенную...')
         except Exception as e:
             print(f'[FATE] status message error uid={uid}: {type(e).__name__}: {e}', flush=True)
         return {'ok':True,'accepted':True,'mode':mode,'cards':chosen}
@@ -535,7 +562,7 @@ def auth_ok(request:Request):
 
 def admin_page():
     s=db.stats(); us=db.users(); tops=db.top_payers(); src=db.source_stats(); reads=db.recent_readings(); pays=db.recent_payments()
-    rows=''.join(f'<tr><td>{u["id"]}</td><td>{html.escape(u["name"] or "")}</td><td>@{html.escape(u["username"] or "—")}</td><td>{int(u["requests"])+int(u["paid_requests"])}</td><td>{int(u["requests"])}</td><td>{int(u["paid_requests"])}</td><td>{"ВКЛ" if has_manual_subscription(u["id"]) else "—"}</td><td>{html.escape(u["source"] or "telegram")}</td><td>{html.escape(u["last_seen"] or "")}</td></tr>' for u in us)
+    rows=''.join(f'<tr><td><a href="/admin/user/{u["id"]}" style="color:#f5e9c8;font-weight:bold;text-decoration:none">{u["id"]}</a></td><td><a href="/admin/user/{u["id"]}" style="color:#d7bb73;text-decoration:none">{html.escape(u["name"] or "")}</a></td><td>@{html.escape(u["username"] or "—")}</td><td>{int(u["requests"])+int(u["paid_requests"])}</td><td>{int(u["requests"])}</td><td>{int(u["paid_requests"])}</td><td>{"ВКЛ" if has_manual_subscription(u["id"]) else "—"}</td><td>{html.escape(u["source"] or "telegram")}</td><td>{html.escape(u["last_seen"] or "")}</td><td><a href="/admin/user/{u["id"]}" style="color:#d7bb73">Открыть</a></td></tr>' for u in us)
     top=''.join(f'<tr><td>{html.escape(x["name"] or "")}</td><td>@{html.escape(x["username"] or "—")}</td><td>{x["total_spent"]} ₽</td></tr>' for x in tops)
     sources=''.join(f'<span class="pill">{html.escape(x["source"])}: {x["n"]}</span>' for x in src)
     rrows=''.join(f'<tr><td>{r["created_at"][:19].replace("T"," ")}</td><td>{html.escape(r["name"] or str(r["user_id"]))}</td><td>{html.escape(DECK_NAMES.get(r["deck"],r["deck"]))}</td><td>{html.escape(r["question"][:120])}</td></tr>' for r in reads)
@@ -582,7 +609,64 @@ body{{margin:0;background:#090816;color:#f5e9c8;font:14px Arial,sans-serif}}.wra
 <section><h2>Последние вопросы</h2><div class="scroll"><table><tr><th>Дата</th><th>Клиент</th><th>Колода</th><th>Вопрос</th></tr>{rrows}</table></div></section><br>
 <section><h2>Платежи</h2><div class="scroll"><table><tr><th>Дата</th><th>Клиент</th><th>Сумма</th><th>Запросы</th><th>Статус</th></tr>{prows}</table></div></section><br>
 <section><h2>Клиенты с оплатами</h2><div class="scroll"><table><tr><th>Имя</th><th>Ник</th><th>Всего</th></tr>{top}</table></div></section><br>
-<section><h2>Пользователи</h2><div class="scroll"><table><tr><th>ID</th><th>Имя</th><th>Ник</th><th>Всего</th><th>Бесплатные</th><th>Оплаченные</th><th>Ручная подписка</th><th>Источник</th><th>Последний вход</th></tr>{rows}</table></div></section></div></body></html>'''
+<section><h2>Пользователи</h2><div class="scroll"><table><tr><th>ID</th><th>Имя</th><th>Ник</th><th>Всего</th><th>Бесплатные</th><th>Оплаченные</th><th>Ручная подписка</th><th>Источник</th><th>Последний вход</th><th>Карточка</th></tr>{rows}</table></div></section></div></body></html>'''
+
+@app.get('/admin/user/{uid}',response_class=HTMLResponse)
+async def admin_user(request:Request, uid:int):
+    if not auth_ok(request):
+        return HTMLResponse('Авторизация требуется',401,headers={'WWW-Authenticate':'Basic realm="Lilit Admin"'})
+    u=db.get(uid)
+    if not u:
+        raise HTTPException(404,'Пользователь не найден')
+    messages=db.user_messages(uid)
+    readings=db.user_readings(uid)
+    payments=db.user_payments(uid)
+    events=db.user_events(uid)
+    total=int(u['requests'])+int(u['paid_requests'])
+    name=html.escape(u['name'] or str(uid))
+    username='@'+html.escape(u['username']) if u['username'] else '—'
+    manual='ВКЛ' if has_manual_subscription(uid) else '—'
+
+    chat_rows=[]
+    for msg in messages:
+        cls='user' if msg['role']=='user' else 'bot'
+        who='Клиент' if msg['role']=='user' else 'Лилит'
+        dt=html.escape((msg['created_at'] or '')[:19].replace('T',' '))
+        body=html.escape(msg['text'] or '')
+        chat_rows.append(f'<div class="msg {cls}"><div class="meta"><b>{who}</b> · {dt}</div><div class="bubble">{body}</div></div>')
+    chat_html=''.join(chat_rows) if chat_rows else '<p class="muted">Сообщений пока нет. Полный журнал начнёт заполняться после установки этой версии.</p>'
+
+    reading_rows=[]
+    for r in readings:
+        dt=html.escape((r['created_at'] or '')[:19].replace('T',' '))
+        deck=html.escape(DECK_NAMES.get(r['deck'],r['deck']))
+        q=html.escape(r['question'] or '')
+        cards=html.escape(r['cards'] or '')
+        ans=html.escape(r['answer'] or '')
+        reading_rows.append(f'<div class="reading"><div class="meta"><b>{deck}</b> · {dt}</div><div><b>Вопрос:</b> {q}</div><div><b>Карты:</b> {cards}</div><div><b>Ответ:</b><div class="answer">{ans}</div></div></div>')
+    readings_html=''.join(reading_rows) if reading_rows else '<p class="muted">Сохранённых раскладов нет.</p>'
+
+    pay_rows=[]
+    for p in payments:
+        dt=html.escape((p['created_at'] or '')[:19].replace('T',' '))
+        pay_rows.append(f'<tr><td>{dt}</td><td>{p["amount"]} ₽</td><td>{p["requests"]}</td><td>{html.escape(p["status"] or "")}</td></tr>')
+    payments_html=''.join(pay_rows) if pay_rows else '<tr><td colspan="4">Платежей нет.</td></tr>'
+
+    event_rows=[]
+    for ev in events[:200]:
+        dt=html.escape((ev['created_at'] or '')[:19].replace('T',' '))
+        event_rows.append(f'<tr><td>{dt}</td><td>{html.escape(ev["event"] or "")}</td><td>{html.escape(ev["meta"] or "")}</td></tr>')
+    events_html=''.join(event_rows) if event_rows else '<tr><td colspan="3">Событий нет.</td></tr>'
+
+    return f'''<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Клиент {uid} · Lilit Admin</title><style>
+body{{margin:0;background:#090816;color:#f5e9c8;font:14px Arial,sans-serif}}.wrap{{max-width:1100px;margin:auto;padding:24px}}a{{color:#d7bb73}}.back{{display:inline-block;margin-bottom:18px}}.hero{{background:#15132a;border:1px solid #302a52;border-radius:16px;padding:20px;box-shadow:0 10px 30px #0003}}.grid{{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:16px}}.stat{{background:#0d0c1c;border:1px solid #292440;border-radius:12px;padding:12px}}.muted{{color:#aaa2bc}}section{{background:#15132a;border:1px solid #302a52;border-radius:16px;padding:18px;margin-top:18px;box-shadow:0 10px 30px #0003}}h1,h2{{font-weight:500}}.dialogue{{display:flex;flex-direction:column;gap:10px}}.msg{{max-width:82%}}.msg.user{{align-self:flex-end}}.msg.bot{{align-self:flex-start}}.meta{{font-size:12px;color:#aaa2bc;margin-bottom:4px}}.bubble{{white-space:pre-wrap;line-height:1.45;border-radius:14px;padding:12px 14px}}.msg.user .bubble{{background:#2b2446}}.msg.bot .bubble{{background:#211d38}}.reading{{border:1px solid #302a52;border-radius:14px;padding:14px;margin-top:10px}}.answer{{white-space:pre-wrap;line-height:1.5;margin-top:8px;background:#0d0c1c;border-radius:10px;padding:12px}}table{{width:100%;border-collapse:collapse}}td,th{{padding:9px;border-bottom:1px solid #292440;text-align:left;vertical-align:top}}@media(max-width:800px){{.grid{{grid-template-columns:repeat(2,1fr)}}.msg{{max-width:95%}}}}</style></head><body><div class="wrap">
+<a class="back" href="/admin">← Вернуться в дашборд</a>
+<div class="hero"><h1>{name}</h1><p>{username} · Telegram ID: <b>{uid}</b></p><div class="grid"><div class="stat">Всего запросов<br><b>{total}</b></div><div class="stat">Бесплатные<br><b>{int(u["requests"])}</b></div><div class="stat">Оплаченные<br><b>{int(u["paid_requests"])}</b></div><div class="stat">Ручная подписка<br><b>{manual}</b></div></div><p class="muted">Источник: {html.escape(u["source"] or "telegram")} · Первый вход: {html.escape((u["first_seen"] or "")[:19].replace("T"," "))} · Последний вход: {html.escape((u["last_seen"] or "")[:19].replace("T"," "))}</p></div>
+<section><h2>💬 Диалог с ботом</h2><div class="dialogue">{chat_html}</div></section>
+<section><h2>🔮 История раскладов</h2><p class="muted">История раскладов сохраняется отдельно и включает записи, сделанные до включения полного журнала сообщений.</p>{readings_html}</section>
+<section><h2>💳 Платежи</h2><table><tr><th>Дата</th><th>Сумма</th><th>Запросов</th><th>Статус</th></tr>{payments_html}</table></section>
+<section><h2>⚙️ События</h2><table><tr><th>Дата</th><th>Событие</th><th>Данные</th></tr>{events_html}</table></section>
+</div></body></html>'''
 
 @app.get('/admin',response_class=HTMLResponse)
 async def admin(request:Request):
@@ -665,7 +749,7 @@ async def _run_broadcast(ids,text_message):
     sent=failed=0
     for uid in ids:
         try:
-            await bot.send_message(uid,text_message)
+            await send_user_message(uid,text_message)
             sent+=1
         except Exception as e:
             failed+=1
