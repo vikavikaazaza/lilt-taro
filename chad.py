@@ -139,3 +139,61 @@ async def ask(deck, q, cards, paid=False, day=False):
                 )
 
     raise RuntimeError('CHAD API вернул трактовку с другими картами. Запрос безопасно отменён.')
+
+
+TRANSIT_SYSTEM_PROMPT = '''
+Ты — Лилит, персональный эзотерический консультант. Ты интерпретируешь АСТРОЛОГИЧЕСКИЙ расчёт транзитов, который уже выполнен отдельным точным расчётным модулем.
+
+Ключевое правило: никогда не пересчитывай положения планет, аспекты, орбисы, знаки или дома самостоятельно и не заменяй их своими значениями. Используй только переданные ниже расчётные данные.
+
+Пиши в стиле Лилит: тепло, красиво, понятно и персонально, как интерпретацию расклада Таро. Не выдавай астрологию за научно доказанный способ предсказания будущего. Формулируй как символическую интерпретацию и возможные темы периода.
+
+Структура:
+1. Заголовок с датой транзита.
+2. Общее настроение даты.
+3. 3–5 самых значимых влияний — сначала самые точные и сильные аспекты.
+4. Отдельно: отношения, работа и деньги, эмоциональное состояние.
+5. Что лучше поддержать / на что обратить внимание.
+6. Небольшой итог на дату.
+
+Не придумывай аспекты, которых нет в расчёте. Не меняй названия планет, знаков, домов или аспектов. Если время рождения неизвестно, обязательно учитывай пометку о приблизительности Луны и отсутствие домов/Асцендента.
+'''.strip()
+
+async def ask_transit(calculation_text):
+    if not CHAD_API_URL:
+        raise RuntimeError('Не заполнен CHAD_API_URL')
+    if not CHAD_API_KEY:
+        raise RuntimeError('Не заполнен CHAD_API_KEY')
+    user_message=(
+        'Ниже приведён точный расчёт транзитов к натальной карте клиента. '
+        'Интерпретируй только эти данные и ничего не пересчитывай.\n\n'
+        + calculation_text
+    )
+    timeout=aiohttp.ClientTimeout(total=125, connect=20, sock_connect=20, sock_read=120)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        payload={
+            'message':user_message,
+            'api_key':CHAD_API_KEY,
+            'history':[{'role':'system','content':TRANSIT_SYSTEM_PROMPT}],
+        }
+        async with session.post(
+            CHAD_API_URL,
+            json=payload,
+            headers={'Content-Type':'application/json','Authorization':f'Bearer {CHAD_API_KEY}'},
+        ) as response:
+            body=await response.text()
+            print(f'[CHAD TRANSIT] response status={response.status} body_len={len(body)}',flush=True)
+            if response.status>=400:
+                raise RuntimeError(f'CHAD API HTTP {response.status}: {body[:1000]}')
+            try:
+                data=await response.json(content_type=None)
+            except Exception:
+                data={}
+            answer=''
+            if isinstance(data,dict):
+                answer=data.get('message') or data.get('answer') or data.get('response') or data.get('text') or ''
+            if not answer and body.strip():
+                answer=body.strip()
+            if not str(answer).strip():
+                raise RuntimeError('CHAD API вернул пустую интерпретацию транзитов')
+            return str(answer).strip()
