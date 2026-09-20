@@ -345,7 +345,7 @@ def card_image(deck,i,name):
         if i < 22:
             filename=f'{i}.jpg'
         else:
-            prefix={22:'ж',36:'ч',50:'м',64:'п'}[22+14*((i-22)//14)]
+            prefix={22:'ж',36:'м',50:'п',64:'ч'}[22+14*((i-22)//14)]
             number=(i-22)%14+1
             filename=f'{prefix}{number}.jpg'
         folder=BASE/'Таро Манара'
@@ -422,15 +422,33 @@ async def mini_select(request:Request):
         expected=1 if deck=='day' else (9 if mode=='premium' else 3)
         if not isinstance(cards,list) or len(cards)!=expected:
             raise HTTPException(400,'Неверное количество карт')
-        names=[str(x.get('name','')) if isinstance(x,dict) else str(x) for x in cards]
-        allowed=WAITE if deck in ('waite','day') else MANARA
-        if len(set(names))!=len(names) or any(n not in allowed for n in names):
-            raise HTTPException(400,'Недопустимые карты')
+        # IMPORTANT: the client sends card IDs that came from /api/miniapp/config.
+        # The server uses the IDs as the source of truth and derives the names
+        # from the canonical deck list. The client-provided names are ignored
+        # for the reading itself, preventing a name/image mismatch.
+        if not isinstance(cards,list) or any(not isinstance(x,dict) for x in cards):
+            raise HTTPException(400,'Неверный формат выбранных карт')
+        source=WAITE if deck in ('waite','day') else MANARA
+        ids=[]
+        for x in cards:
+            raw_id=x.get('id')
+            if isinstance(raw_id,bool):
+                raise HTTPException(400,'Недопустимый ID карты')
+            try:
+                card_id=int(raw_id)
+            except (TypeError,ValueError):
+                raise HTTPException(400,'Недопустимый ID карты')
+            if card_id < 0 or card_id >= len(source):
+                raise HTTPException(400,'Недопустимый ID карты')
+            ids.append(card_id)
+        if len(set(ids))!=len(ids):
+            raise HTTPException(400,'Нельзя выбрать одну карту дважды')
+        names=[source[i] for i in ids]
         premium=(mode=='premium' and deck!='day')
         if not consume_request(uid,premium=premium):
             raise HTTPException(409,'Нет доступных запросов')
-        print(f'[MINI] ACCEPT uid={uid} deck={deck} mode={mode} cards={names!r}', flush=True)
-        task=asyncio.create_task(process_reading(uid,deck,mode,[{'name':n} for n in names],question,premium))
+        print(f'[MINI] ACCEPT uid={uid} deck={deck} mode={mode} card_ids={ids!r} canonical_cards={names!r}', flush=True)
+        task=asyncio.create_task(process_reading(uid,deck,mode,[{'id':i,'name':n} for i,n in zip(ids,names)],question,premium))
         _track_reading_task(task)
         try:
             await bot.send_message(uid,'Отправляем ваш запрос во Вселенную... Подождите...')
@@ -466,7 +484,8 @@ async def mini_fate(request:Request):
         if len(available) < expected:
             raise HTTPException(500,'Недостаточно доступных карт')
         chosen=secrets.SystemRandom().sample(available,expected)
-        names=[x['name'] for x in chosen]
+        # The selected IDs and canonical names are generated server-side.
+        names=[source[int(x['id'])] for x in chosen]
         premium=(mode=='premium' and deck!='day')
         if not consume_request(uid,premium=premium):
             raise HTTPException(409,'Нет доступных запросов')
