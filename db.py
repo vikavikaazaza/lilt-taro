@@ -53,6 +53,28 @@ def init():
           created_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_messages_user_created ON messages(user_id, created_at, id);
+        CREATE TABLE IF NOT EXISTS transit_profiles(
+          user_id INTEGER PRIMARY KEY,
+          birth_date TEXT NOT NULL,
+          birth_time TEXT,
+          time_known INTEGER NOT NULL DEFAULT 0,
+          city TEXT NOT NULL,
+          latitude REAL NOT NULL,
+          longitude REAL NOT NULL,
+          timezone TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS transit_readings(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL,
+          transit_date TEXT NOT NULL,
+          city TEXT NOT NULL,
+          input_data TEXT NOT NULL,
+          calculation TEXT NOT NULL,
+          answer TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_transit_readings_user_created ON transit_readings(user_id, created_at, id);
         ''')
         # Upgrade older databases safely.
         cols={r['name'] for r in c.execute('PRAGMA table_info(users)').fetchall()}
@@ -120,6 +142,28 @@ def user_payments(uid, limit=200):
 def user_events(uid, limit=500):
     with conn() as c:
         return c.execute('SELECT * FROM events WHERE user_id=? ORDER BY created_at DESC, id DESC LIMIT ?',(int(uid),int(limit))).fetchall()
+
+def save_transit_profile(uid, birth_date, birth_time, time_known, city, latitude, longitude, timezone):
+    with conn() as c:
+        c.execute(
+            'INSERT INTO transit_profiles(user_id,birth_date,birth_time,time_known,city,latitude,longitude,timezone,updated_at) VALUES(?,?,?,?,?,?,?,?,?) '
+            'ON CONFLICT(user_id) DO UPDATE SET birth_date=excluded.birth_date,birth_time=excluded.birth_time,time_known=excluded.time_known,city=excluded.city,latitude=excluded.latitude,longitude=excluded.longitude,timezone=excluded.timezone,updated_at=excluded.updated_at',
+            (int(uid),str(birth_date),birth_time if birth_time else None,int(bool(time_known)),str(city),float(latitude),float(longitude),str(timezone),now())
+        )
+        return c.execute('SELECT * FROM transit_profiles WHERE user_id=?',(int(uid),)).fetchone()
+
+def transit_profile(uid):
+    with conn() as c:
+        return c.execute('SELECT * FROM transit_profiles WHERE user_id=?',(int(uid),)).fetchone()
+
+def save_transit_reading(uid, transit_date, city, input_data, calculation, answer):
+    with conn() as c:
+        c.execute('INSERT INTO transit_readings(user_id,transit_date,city,input_data,calculation,answer,created_at) VALUES(?,?,?,?,?,?,?)',
+                  (int(uid),str(transit_date),str(city),str(input_data),str(calculation),str(answer),now()))
+
+def user_transit_readings(uid, limit=100):
+    with conn() as c:
+        return c.execute('SELECT * FROM transit_readings WHERE user_id=? ORDER BY created_at ASC, id ASC LIMIT ?',(int(uid),int(limit))).fetchall()
 def set_pending(uid,deck,mode,question):
     with conn() as c: c.execute('INSERT INTO pending(user_id,deck,mode,question,created_at) VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET deck=excluded.deck,mode=excluded.mode,question=excluded.question,created_at=excluded.created_at',(uid,deck,mode,question,now()))
 
