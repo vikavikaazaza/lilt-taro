@@ -49,10 +49,10 @@ DECK_NAMES={'waite':'Таро Уэйта','manara':'Таро Манара','day'
 
 def menu():
     return InlineKeyboardMarkup(inline_keyboard=[
-      [InlineKeyboardButton(text='Таро Уэйта',callback_data='deck:waite'),InlineKeyboardButton(text='Таро Манара',callback_data='deck:manara')],
-      [InlineKeyboardButton(text='Карта дня',callback_data='day')],
-      [InlineKeyboardButton(text='Реферальная программа',callback_data='friend')],
-      [InlineKeyboardButton(text='Оформить подписку',callback_data='pay')]])
+      [InlineKeyboardButton(text='Таро Уэйта 🔮',callback_data='deck:waite'),InlineKeyboardButton(text='Таро Манара 🍓',callback_data='deck:manara')],
+      [InlineKeyboardButton(text='Карта дня 🧘🏼',callback_data='day')],
+      [InlineKeyboardButton(text='Реферальная программа ❤️',callback_data='friend')],
+      [InlineKeyboardButton(text='Оформить подписку 🌟',callback_data='pay')]])
 
 def pay_menu():
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='3 вопроса — 99 рублей',callback_data='pack:3')],[InlineKeyboardButton(text='5 вопросов — 159 рублей',callback_data='pack:5')],[InlineKeyboardButton(text='10 вопросов — 329 рублей',callback_data='pack:10')]])
@@ -70,7 +70,7 @@ def mini_url(deck,mode,choice='manual'):
             f'&choice={urllib.parse.quote(choice)}&v={MINIAPP_VERSION}')
 
 def mini_buttons(deck,mode):
-    manual_text='Вытянуть карту дня' if deck=='day' else 'Вытянуть карты'
+    manual_text='Получить карту дня' if deck=='day' else 'Получить карты'
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=manual_text,web_app=WebAppInfo(url=mini_url(deck,mode,'manual')))],
         [InlineKeyboardButton(text='Довериться судьбе ✨',web_app=WebAppInfo(url=mini_url(deck,mode,'fate')))]
@@ -96,7 +96,7 @@ async def day_start(m):
         await subscription(m)
         return
     db.set_pending(m.from_user.id,'day','free','Карта дня')
-    await m.answer('Давай посмотрим, что ждет тебя сегодня❤️ Ты можешь сам вытянуть карту из колоды или довериться судьбе🌙',reply_markup=mini_buttons('day','free'))
+    await m.answer('Начинаем гадание, переходим к карте дня. 🧘🏼',reply_markup=mini_buttons('day','free'))
 
 async def deck_start(m,deck):
     mode='premium' if premium_access(m.from_user.id) else 'free'
@@ -158,7 +158,7 @@ async def day_cb(c):
         await subscription(c.message)
         return
     db.set_pending(uid,'day','free','Карта дня')
-    await c.message.answer('Давай посмотрим, что ждет тебя сегодня❤️ Ты можешь сам вытянуть карту из колоды или довериться судьбе🌙',reply_markup=mini_buttons('day','free'))
+    await c.message.answer('Начинаем гадание, переходим к карте дня. 🧘🏼',reply_markup=mini_buttons('day','free'))
 
 @router.callback_query(F.data=='friend')
 async def friend_cb(c): await c.answer(); await friend_show(c.message)
@@ -198,9 +198,9 @@ async def text_message(m):
     await send_admin_question(m,deck,m.text)
     if deck=='day':
         db.set_pending(m.from_user.id,'day','free',m.text)
-        await m.answer('Давай посмотрим, что ждет тебя сегодня❤️ Ты можешь сам вытянуть карту из колоды или довериться судьбе🌙',reply_markup=mini_buttons('day','free'))
+        await m.answer('Начинаем гадание, переходим к карте дня. 🧘🏼',reply_markup=mini_buttons('day','free'))
     else:
-        await m.answer('Твой вопрос услышан. Сейчас карты покажут то, что важно увидеть именно тебе 🌙 Ты можешь сам вытянуть карты из колоды или довериться судьбе✨',reply_markup=mini_buttons(deck,mode))
+        await m.answer('Начинаем гадание, выбирай карты или доверься судьбе ✨',reply_markup=mini_buttons(deck,mode))
 
 def match_waite(q):
     norm=' '.join(q.lower().replace('ё','е').split())
@@ -229,16 +229,84 @@ async def create_payment(m,n,email):
     from yookassa import Configuration, Payment
     Configuration.account_id=config.YOOKASSA_SHOP_ID; Configuration.secret_key=config.YOOKASSA_SECRET_KEY
     idem=secrets.token_hex(16); amount=config.PACKAGES[n]
+    # User ID in return_url lets the success page immediately reconcile the latest
+    # pending payment even when YooKassa webhook delivery is delayed or misconfigured.
+    return_url=f'{config.PUBLIC_BASE_URL}/payment/success?uid={m.from_user.id}'
     payment=Payment.create({
       'amount':{'value':f'{amount:.2f}','currency':'RUB'},
       'capture':True,
-      'confirmation':{'type':'redirect','return_url':f'{config.PUBLIC_BASE_URL}/payment/success'},
+      'confirmation':{'type':'redirect','return_url':return_url},
       'description':'Оплата подписки Лилит',
       'receipt':{'customer':{'email':email},'items':[{'description':'Оплата подписки Лилит','quantity':'1.00','amount':{'value':f'{amount:.2f}','currency':'RUB'},'vat_code':1,'payment_mode':'full_payment','payment_subject':'service'}]},
       'metadata':{'user_id':str(m.from_user.id),'requests':str(n),'email':email}
     },idem)
     db.payment(m.from_user.id,payment.id,amount,n,'pending',email); db.event(m.from_user.id,'payment_created',str(payment.id))
+    print(f'[PAYMENT] CREATED uid={m.from_user.id} payment_id={payment.id} amount={amount} requests={n}', flush=True)
     await m.answer(f'Перейдите к оплате: {payment.confirmation.confirmation_url}')
+
+async def _payment_find(payment_id):
+    from yookassa import Configuration, Payment
+    Configuration.account_id=config.YOOKASSA_SHOP_ID; Configuration.secret_key=config.YOOKASSA_SECRET_KEY
+    return await asyncio.to_thread(Payment.find_one, payment_id)
+
+def _obj_value(obj,key,default=None):
+    if isinstance(obj,dict): return obj.get(key,default)
+    return getattr(obj,key,default)
+
+async def _settle_yookassa_payment(payment_obj):
+    pid=str(_obj_value(payment_obj,'id','') or '')
+    status=str(_obj_value(payment_obj,'status','') or '')
+    if not pid or status!='succeeded':
+        return False, None
+    meta=_obj_value(payment_obj,'metadata',{}) or {}
+    if not isinstance(meta,dict):
+        try: meta=dict(meta)
+        except Exception: meta={}
+    local=db.payment_status(pid)
+    uid=int(meta.get('user_id') or (local['user_id'] if local else 0) or 0)
+    n=int(meta.get('requests') or (local['requests'] if local else 0) or 0)
+    amount_value=_obj_value(_obj_value(payment_obj,'amount',{}) or {},'value',None)
+    if amount_value is None:
+        amount_value=local['amount'] if local else 0
+    amount=int(round(float(amount_value or 0)))
+    email=str(meta.get('email') or (local['email'] if local else '') or '')
+    if not uid or n not in config.PACKAGES:
+        print(f'[PAYMENT] INVALID pid={pid} uid={uid} requests={n}', flush=True)
+        return False, None
+    added,row=db.complete_payment(pid,uid,amount,n,email)
+    if added:
+        print(f'[PAYMENT] CREDITED uid={uid} payment_id={pid} requests={n} amount={amount}', flush=True)
+        try:
+            if config.ADMIN_CHAT_ID:
+                u=db.get(uid); username=f'@{u["username"]}' if u and u['username'] else '—'
+                await bot.send_message(config.ADMIN_CHAT_ID, f'🔥 КЛИЕНТ ОПЛАТИЛ 🔥\n\n🕯️ Имя: {u["name"] if u else uid}\n🕯️ Ник: {username}\n🕯️ Сумма: {amount} рублей\n🕯️ Запросы: {n}')
+            await bot.send_message(uid,f'Оплата прошла успешно ❤️\nВам доступно {n} новых запросов.')
+        except Exception as e:
+            print(f'[PAYMENT] notification error uid={uid}: {type(e).__name__}: {e}', flush=True)
+    return added,row
+
+async def _reconcile_pending_payments_once(user_id=None):
+    try:
+        rows=db.pending_payments(20,user_id)
+    except Exception as e:
+        print(f'[PAYMENT] DB pending error: {type(e).__name__}: {e}', flush=True); return 0
+    credited=0
+    for row in rows:
+        pid=str(row['payment_id'])
+        try:
+            obj=await _payment_find(pid)
+            added,_=await _settle_yookassa_payment(obj)
+            credited += int(bool(added))
+        except Exception as e:
+            print(f'[PAYMENT] reconcile error payment_id={pid}: {type(e).__name__}: {e}', flush=True)
+    return credited
+
+async def _yookassa_reconcile_loop():
+    # Fallback for stores where webhook delivery is delayed or not configured.
+    await asyncio.sleep(5)
+    while True:
+        await _reconcile_pending_payments_once()
+        await asyncio.sleep(20)
 
 app=FastAPI(title='Lilit Taro')
 app.mount('/cards',StaticFiles(directory=str(BASE)),name='cards')
@@ -418,20 +486,26 @@ async def mini_fate(request:Request):
 
 @app.post('/yookassa/webhook')
 async def yookassa_webhook(request:Request):
-    body=await request.json(); obj=body.get('object',{}); event=body.get('event','')
+    body=await request.json(); event=body.get('event','')
     if event!='payment.succeeded': return {'ok':True}
-    pid=obj.get('id'); existing=db.payment_status(pid)
-    if existing and existing['status']=='succeeded': return {'ok':True}
-    meta=obj.get('metadata',{}); uid=int(meta.get('user_id',0)); n=int(meta.get('requests',0)); amount=int(round(float(obj.get('amount',{}).get('value',0))))
-    if not uid or n not in config.PACKAGES: return {'ok':False}
-    db.payment(uid,pid,amount,n,'pending',meta.get('email','')); db.set_payment_status(pid,'succeeded'); db.add_paid(uid,n,amount); db.event(uid,'payment_succeeded',pid)
-    if config.ADMIN_CHAT_ID:
-        u=db.get(uid); username=f'@{u["username"]}' if u and u['username'] else '—'; await bot.send_message(config.ADMIN_CHAT_ID,f'🔥 КЛИЕНТ ОПЛАТИЛ 🔥\n\n🕯️ Имя: {u["name"] if u else uid}\n🕯️ Ник: {username}\n🕯️ Сумма: {amount} рублей')
-    await bot.send_message(uid,f'Вам доступно {n} запросов 🌟')
-    return {'ok':True}
+    obj=body.get('object',{})
+    try:
+        added,_=await _settle_yookassa_payment(obj)
+        return {'ok':True,'credited':bool(added)}
+    except Exception as e:
+        print(f'[PAYMENT] webhook error: {type(e).__name__}: {e}', flush=True)
+        raise HTTPException(500,'Ошибка обработки платежа')
 
 @app.get('/payment/success',response_class=HTMLResponse)
-async def payment_success(): return '<html><meta charset="utf-8"><body style="font-family:Arial;text-align:center;padding:40px"><h2>Оплата прошла успешно ❤️</h2><p>Вернитесь в Telegram — запросы уже начислены.</p></body></html>'
+async def payment_success(uid:int=0):
+    credited=0
+    if uid:
+        credited=await _reconcile_pending_payments_once(uid)
+    if credited:
+        text='<h2>Оплата подтверждена ❤️</h2><p>Запросы уже начислены. Вернитесь в Telegram.</p>'
+    else:
+        text='<h2>Спасибо за оплату ❤️</h2><p>Проверяем платеж. Вернитесь в Telegram — запросы появятся автоматически после подтверждения.</p>'
+    return '<html><meta charset="utf-8"><body style="font-family:Arial;text-align:center;padding:40px">'+text+'</body></html>'
 
 def auth_ok(request:Request):
     a=request.headers.get('authorization','')
@@ -618,6 +692,12 @@ async def main():
     await bot.delete_webhook(drop_pending_updates=True)
     port=int(__import__('os').getenv('PORT','8000'))
     server=uvicorn.Server(uvicorn.Config(app,host='0.0.0.0',port=port,log_level='info'))
-    await asyncio.gather(dp.start_polling(bot), server.serve())
+    payment_task=asyncio.create_task(_yookassa_reconcile_loop())
+    try:
+        await asyncio.gather(dp.start_polling(bot), server.serve())
+    finally:
+        payment_task.cancel()
+        try: await payment_task
+        except asyncio.CancelledError: pass
 
 if __name__=='__main__': asyncio.run(main())
