@@ -217,7 +217,7 @@ async def ask_transit(calculation_text):
         'Интерпретируй только эти данные и ничего не пересчитывай.\n\n'
         + calculation_text
     )
-    timeout=aiohttp.ClientTimeout(total=125, connect=20, sock_connect=20, sock_read=120)
+    timeout=aiohttp.ClientTimeout(total=305, connect=20, sock_connect=20, sock_read=300)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         payload={
             'message':user_message,
