@@ -472,6 +472,44 @@ async def transit_profile_api(request:Request):
         'lon':float(row['longitude']),'timezone':row['timezone']
     }}
 
+@app.post('/api/transits/preview')
+async def transit_preview_api(request:Request):
+    body=await request.json()
+    tg=validate_init_data(body.get('initData',''))
+    if not tg: raise HTTPException(403,'Недействительный Telegram initData')
+    uid=int(tg['id'])
+    if not db.get(uid): raise HTTPException(404,'Пользователь не найден')
+    birth_date,birth_time,time_known,transit_date,city,lat,lon,tz_name=_validate_transit_payload(body)
+    try:
+        calc=calculate_transits(birth_date,birth_time,transit_date,lat,lon,tz_name,city)
+    except ValueError as exc:
+        raise HTTPException(400,str(exc)) from exc
+    except Exception as exc:
+        print(f'[TRANSITS] PREVIEW ERROR uid={uid}: {type(exc).__name__}: {exc}',flush=True)
+        raise HTTPException(500,'Не удалось рассчитать аспекты') from exc
+    aspects=[]
+    for a in calc.get('aspects',[])[:12]:
+        aspects.append({
+            'transit_planet':a['transit_planet'],
+            'aspect':a['aspect'],
+            'natal_planet':a['natal_planet'],
+            'orb_text':a['orb_text'],
+            'state':a['state'],
+            'house':a.get('house'),
+            'transit_sign':a.get('transit_sign'),
+            'transit_position':a.get('transit_position'),
+            'transit_retrograde':bool(a.get('transit_retrograde')),
+        })
+    return {
+        'ok':True,
+        'transit_date':calc['transit_date'],
+        'city':calc['city'],
+        'time_known':bool(calc['time_known']),
+        'ascendant_sign':calc.get('ascendant_sign'),
+        'aspects':aspects,
+    }
+
+
 async def _run_transit(uid, payload, calc):
     try:
         # The transit product uses one regular request from the user's balance.
@@ -481,6 +519,7 @@ async def _run_transit(uid, payload, calc):
         calc_text=calculation_for_ai(calc)
         db.event(uid,'transit_calculated',f"{calc['transit_date']}|{calc['city']}")
         print(f'[TRANSITS] START uid={uid} date={calc["transit_date"]} city={calc["city"]}',flush=True)
+        await send_user_message(uid,'Загружаем Вашу натальную карту, делаем расчет...\n\nПожалуйста, подождите, Лилит готовит Ваш персональный прогноз на выбранную дату 🌌')
         answer=await ask_transit(calc_text)
         db.save_transit_reading(
             uid,calc['transit_date'],calc['city'],json.dumps(payload,ensure_ascii=False),
