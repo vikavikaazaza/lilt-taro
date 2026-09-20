@@ -525,7 +525,30 @@ async def _run_transit(uid, payload, calc):
             uid,calc['transit_date'],calc['city'],json.dumps(payload,ensure_ascii=False),
             json.dumps(calc,ensure_ascii=False),answer
         )
-        await send_user_message(uid,answer)
+        # Убираем Markdown-символы и защищаемся от превышения лимита Telegram.
+answer = str(answer).replace('```', '').replace('**', '').replace('*', '').replace('#', '').strip()
+
+max_len = 3900
+parts = []
+remaining = answer
+
+while len(remaining) > max_len:
+    cut = remaining.rfind('\n\n', 0, max_len)
+    if cut < 1000:
+        cut = remaining.rfind('\n', 0, max_len)
+    if cut < 1000:
+        cut = remaining.rfind(' ', 0, max_len)
+    if cut < 1:
+        cut = max_len
+
+    parts.append(remaining[:cut].strip())
+    remaining = remaining[cut:].strip()
+
+if remaining:
+    parts.append(remaining)
+
+for part in parts:
+    await send_user_message(uid, part)
         user_now=db.get(uid)
         left=(int(user_now['requests'])+int(user_now['paid_requests'])) if user_now else 0
         await send_user_message(uid,f'Ваше количество запросов: {left}\n\nЕсли хочешь посмотреть другую дату — снова открой «Транзиты» 🌌')
