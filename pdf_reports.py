@@ -98,9 +98,9 @@ _BOLD = "LilitBold"
 
 def _register_fonts() -> None:
     if _REGULAR not in pdfmetrics.getRegisteredFontNames():
-        pdfmetrics.registerFont(TTFont(_REGULAR, _font_path("DejaVuSans", bold=False)))
+        pdfmetrics.registerFont(TTFont(_REGULAR, _font_path(bold=False)))
     if _BOLD not in pdfmetrics.getRegisteredFontNames():
-        pdfmetrics.registerFont(TTFont(_BOLD, _font_path("DejaVuSans-Bold", bold=True)))
+        pdfmetrics.registerFont(TTFont(_BOLD, _font_path(bold=True)))
 
 
 def _draw_background(c: canvas.Canvas, doc) -> None:
@@ -347,7 +347,7 @@ def build_synastry_pdf(path: str | Path, answer: str, calc: dict) -> str:
         f"{name2}: {p2.get('birth_date', '')} · {p2.get('birth_time') or 'время неизвестно'} · {p2.get('city', '')}",
         f"Синастрических аспектов: {calc.get('aspect_count', 0)} · аспектов к углам: {calc.get('angle_aspect_count', 0)}",
     ]
-    return _build_pdf(path, "Синастрия", "ЛИЛИТ · персональный разбор отношений", meta, answer)
+    return _build_pdf(path, "Синастрия", "ЛИЛИТ · персональный разбор отношений @Lilit_taro_bot", meta, answer)
 
 
 def build_transit_pdf(path: str | Path, answer: str, calc: dict) -> str:
