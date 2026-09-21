@@ -89,7 +89,7 @@ def menu():
     return InlineKeyboardMarkup(inline_keyboard=[
       [InlineKeyboardButton(text='Таро Уэйта',callback_data='deck:waite'),InlineKeyboardButton(text='Таро Манара',callback_data='deck:manara')],
       [InlineKeyboardButton(text='Карта дня',callback_data='day'),InlineKeyboardButton(text='Синастрия',callback_data='synastry')],
-      [InlineKeyboardButton(text='🌌 Транзиты',callback_data='transits'),InlineKeyboardButton(text='Транзиты синастрии',callback_data='synastry_transits')],
+      [InlineKeyboardButton(text='Транзиты',callback_data='transits'),InlineKeyboardButton(text='Транзиты синастрии',callback_data='synastry_transits')],
       [InlineKeyboardButton(text='Реферальная программа',callback_data='friend')],
       [InlineKeyboardButton(text='Оформить подписку',callback_data='pay')]])
 
@@ -109,7 +109,7 @@ def mini_url(deck,mode,choice='manual'):
             f'&choice={urllib.parse.quote(choice)}&v={MINIAPP_VERSION}')
 
 def mini_buttons(deck,mode):
-    manual_text='Получить карту дня' if deck=='day' else 'Получить карты'
+    manual_text='Вытянуть карту дня' if deck=='day' else 'Вытянуть карты'
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=manual_text,web_app=WebAppInfo(url=mini_url(deck,mode,'manual')))],
         [InlineKeyboardButton(text='Довериться судьбе ✨',web_app=WebAppInfo(url=mini_url(deck,mode,'fate')))]
