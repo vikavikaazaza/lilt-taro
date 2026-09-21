@@ -13,8 +13,10 @@ from fastapi.staticfiles import StaticFiles
 import uvicorn
 
 import config, db
-from chad import ask, ask_transit
+from chad import ask, ask_transit, ask_synastry, ask_synastry_transits
 from transits import calculate_transits, calculation_for_ai
+from synastry import calculate_synastry, calculation_for_ai as synastry_calculation_for_ai
+from synastry_transits import calculate_synastry_transits, calculation_for_ai as synastry_transits_calculation_for_ai
 
 BASE=Path(__file__).resolve().parent
 router=Router()
@@ -22,7 +24,9 @@ bot: Bot
 BROADCAST_TASKS=set()
 READING_TASKS=set()
 TRANSIT_TASKS=set()
+RELATION_TASKS=set()
 TRANSIT_MINIAPP_VERSION='1'
+RELATION_MINIAPP_VERSION='1'
 NOMINATIM_LOCK=asyncio.Lock()
 NOMINATIM_LAST=0.0
 
@@ -86,6 +90,8 @@ def menu():
       [InlineKeyboardButton(text='Таро Уэйта 🔮',callback_data='deck:waite'),InlineKeyboardButton(text='Таро Манара 🍓',callback_data='deck:manara')],
       [InlineKeyboardButton(text='Карта дня 🧘🏼',callback_data='day')],
       [InlineKeyboardButton(text='🌌 Транзиты',callback_data='transits')],
+      [InlineKeyboardButton(text='💞 Синастрия',callback_data='synastry')],
+      [InlineKeyboardButton(text='🔭 Транзиты синастрии',callback_data='synastry_transits')],
       [InlineKeyboardButton(text='Реферальная программа ❤️',callback_data='friend')],
       [InlineKeyboardButton(text='Оформить подписку 🌟',callback_data='pay')]])
 
@@ -119,6 +125,30 @@ def transit_mini_button():
 
 async def transit_start(m):
     await answer_user(m, 'Посмотрим, какие темы и влияния могут быть активны для тебя в выбранную дату 🌌\n\nВведи данные рождения и дату, на которую хочешь сделать расчёт.', reply_markup=transit_mini_button())
+
+
+def relation_mini_button(kind):
+    if not bot_url().startswith('https://'):
+        raise RuntimeError('PUBLIC_BASE_URL должен начинаться с https://')
+    path='synastry' if kind=='synastry' else 'synastry-transits'
+    text='Открыть синастрию 💞' if kind=='synastry' else 'Открыть транзиты синастрии 🔭'
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=text,web_app=WebAppInfo(url=f'{bot_url()}/{path}?v={RELATION_MINIAPP_VERSION}'))]])
+
+async def synastry_start(m):
+    u=db.get(m.from_user.id)
+    if not u or int(u['requests'])+int(u['paid_requests'])<=0:
+        await answer_user(m,'У вас осталось 0 запросов.')
+        await subscription(m)
+        return
+    await answer_user(m,'Сравним две натальные карты и посмотрим, как люди взаимодействуют друг с другом 💞\n\nВведи данные рождения обоих людей.',reply_markup=relation_mini_button('synastry'))
+
+async def synastry_transits_start(m):
+    u=db.get(m.from_user.id)
+    if not u or int(u['requests'])+int(u['paid_requests'])<=0:
+        await answer_user(m,'У вас осталось 0 запросов.')
+        await subscription(m)
+        return
+    await answer_user(m,'Посмотрим, какой период сейчас переживают ваши отношения и какие темы активируются на выбранную дату 🔭\n\nВведи данные рождения обоих людей и дату прогноза.',reply_markup=relation_mini_button('synastry_transits'))
 
 async def main_menu(m):
     u=db.get(m.from_user.id); left=(int(u['requests']) if u else 0)+(int(u['paid_requests']) if u else 0)
@@ -181,6 +211,12 @@ async def day_cmd(m): await day_start(m)
 @router.message(Command('transits'))
 async def transits_cmd(m): await transit_start(m)
 
+@router.message(Command('synastry'))
+async def synastry_cmd(m): await synastry_start(m)
+
+@router.message(Command('synastry_transits'))
+async def synastry_transits_cmd(m): await synastry_transits_start(m)
+
 @router.callback_query(F.data.startswith('deck:'))
 async def deck_cb(c):
     await c.answer()
@@ -210,6 +246,16 @@ async def day_cb(c):
 async def transits_cb(c):
     await c.answer()
     await transit_start(c.message)
+
+@router.callback_query(F.data=='synastry')
+async def synastry_cb(c):
+    await c.answer()
+    await synastry_start(c.message)
+
+@router.callback_query(F.data=='synastry_transits')
+async def synastry_transits_cb(c):
+    await c.answer()
+    await synastry_transits_start(c.message)
 
 @router.callback_query(F.data=='friend')
 async def friend_cb(c): await c.answer(); await friend_show(c.message)
@@ -519,13 +565,15 @@ async def _run_transit(uid, payload, calc):
         calc_text=calculation_for_ai(calc)
         db.event(uid,'transit_calculated',f"{calc['transit_date']}|{calc['city']}")
         print(f'[TRANSITS] START uid={uid} date={calc["transit_date"]} city={calc["city"]}',flush=True)
+        await send_user_message(uid,'Загружаем Вашу натальную карту, делаем расчет...\n\nПожалуйста, подождите, Лилит готовит Ваш персональный прогноз на выбранную дату 🌌')
         answer=await ask_transit(calc_text)
         db.save_transit_reading(
             uid,calc['transit_date'],calc['city'],json.dumps(payload,ensure_ascii=False),
             json.dumps(calc,ensure_ascii=False),answer
         )
-        if len(answer)>3300:
-            raise RuntimeError('Прогноз транзитов превысил допустимые 3300 символов')
+        if len(answer) > 3300:
+            raise RuntimeError(f'Размер прогноза превышает 3300 символов: {len(answer)}')
+        print(f'[TRANSITS] ANSWER uid={uid} chars={len(answer)} aspects={len(calc.get("aspects", []))}',flush=True)
         await send_user_message(uid,answer)
         user_now=db.get(uid)
         left=(int(user_now['requests'])+int(user_now['paid_requests'])) if user_now else 0
@@ -559,11 +607,159 @@ async def transit_calculate_api(request:Request):
         'birth_date':birth_date.isoformat(),'birth_time':birth_time.strftime('%H:%M') if birth_time else '',
         'time_known':time_known,'transit_date':transit_date.isoformat(),'city':city,'lat':lat,'lon':lon,'timezone':tz_name
     }
-    # Send the progress message before closing the Mini App so the client immediately
-    # knows that the calculation has started. CHAD runs in the background afterward.
-    await send_user_message(uid,'Загружаем Вашу натальную карту, делаем расчет...\n\nПожалуйста, подождите, Лилит готовит Ваш персональный прогноз на выбранную дату 🌌')
+    # Do not let the Mini App wait for CHAD. The arithmetic is fast and is done before returning.
     task=asyncio.create_task(_run_transit(uid,payload,calc)); TRANSIT_TASKS.add(task); task.add_done_callback(TRANSIT_TASKS.discard)
     return {'ok':True,'accepted':True,'message':'Расчёт запущен'}
+
+def _validate_relation_person(person, label):
+    if not isinstance(person, dict):
+        raise HTTPException(400, f'Не заполнены данные: {label}')
+    name=str(person.get('name') or '').strip()
+    try:
+        birth_date=dt_date.fromisoformat(str(person.get('birth_date','')).strip())
+    except Exception as exc:
+        raise HTTPException(400, f'Некорректная дата рождения: {label}') from exc
+    if not 1900 <= birth_date.year <= 2200:
+        raise HTTPException(400, f'Дата рождения должна быть в диапазоне 1900–2200: {label}')
+    raw_time=str(person.get('birth_time') or '').strip()
+    time_known=bool(person.get('time_known',bool(raw_time)))
+    birth_time=None
+    if time_known:
+        try: birth_time=dt_time.fromisoformat(raw_time)
+        except Exception as exc: raise HTTPException(400, f'Некорректное время рождения: {label}') from exc
+    city=str(person.get('city') or '').strip()
+    if len(city)<2: raise HTTPException(400, f'Укажите город рождения: {label}')
+    try: lat=float(person.get('lat')); lon=float(person.get('lon'))
+    except Exception as exc: raise HTTPException(400, f'Выберите город из найденных вариантов: {label}') from exc
+    if not (-90<=lat<=90 and -180<=lon<=180): raise HTTPException(400, f'Некорректные координаты города: {label}')
+    try:
+        from timezonefinder import timezone_at
+        tz_name=timezone_at(lng=lon,lat=lat)
+    except Exception as exc:
+        raise HTTPException(500, 'Не удалось определить часовой пояс города') from exc
+    if not tz_name: raise HTTPException(400, f'Не удалось определить часовой пояс города: {label}')
+    try: ZoneInfo(tz_name)
+    except ZoneInfoNotFoundError as exc: raise HTTPException(400, f'Неизвестный часовой пояс города: {label}') from exc
+    return {'name':name,'birth_date':birth_date,'birth_time':birth_time,'time_known':time_known,'city':city,'lat':lat,'lon':lon,'timezone':tz_name}
+
+def _relation_payload_from_body(body):
+    return _validate_relation_person(body.get('person1'),'человек 1'), _validate_relation_person(body.get('person2'),'человек 2')
+
+def _relation_input_json(p1,p2,transit_date=None):
+    def clean(p):
+        return {'name':p['name'],'birth_date':p['birth_date'].isoformat(),'birth_time':p['birth_time'].strftime('%H:%M') if p['birth_time'] else '', 'time_known':bool(p['time_known']),'city':p['city'],'lat':p['lat'],'lon':p['lon'],'timezone':p['timezone']}
+    result={'person1':clean(p1),'person2':clean(p2)}
+    if transit_date is not None: result['transit_date']=transit_date.isoformat()
+    return result
+
+@app.get('/synastry', response_class=HTMLResponse)
+async def synastry_miniapp():
+    return FileResponse(BASE/'web'/'synastry.html',headers={'Cache-Control':'no-store, no-cache, must-revalidate, max-age=0'})
+
+@app.get('/synastry-transits', response_class=HTMLResponse)
+async def synastry_transits_miniapp():
+    return FileResponse(BASE/'web'/'synastry-transits.html',headers={'Cache-Control':'no-store, no-cache, must-revalidate, max-age=0'})
+
+@app.get('/api/synastry/profile')
+async def synastry_profile_api(request:Request):
+    tg=validate_init_data(request.query_params.get('initData',''))
+    if not tg: raise HTTPException(403,'Недействительный Telegram initData')
+    row=db.synastry_profile(int(tg['id']))
+    if not row: return {'profile':None}
+    def p(name,bdate,btime,tknown,city,lat,lon,tz): return {'name':name or '','birth_date':bdate,'birth_time':btime or '','time_known':bool(tknown),'city':city,'lat':float(lat),'lon':float(lon),'timezone':tz}
+    return {'profile':{'person1':p(row['name1'],row['birth_date1'],row['birth_time1'],row['time_known1'],row['city1'],row['latitude1'],row['longitude1'],row['timezone1']), 'person2':p(row['name2'],row['birth_date2'],row['birth_time2'],row['time_known2'],row['city2'],row['latitude2'],row['longitude2'],row['timezone2'])}}
+
+@app.post('/api/synastry/preview')
+async def synastry_preview_api(request:Request):
+    body=await request.json(); tg=validate_init_data(body.get('initData',''))
+    if not tg: raise HTTPException(403,'Недействительный Telegram initData')
+    uid=int(tg['id'])
+    if not db.get(uid): raise HTTPException(404,'Пользователь не найден')
+    p1,p2=_relation_payload_from_body(body)
+    calc=calculate_synastry(p1,p2,p1['name'],p2['name'])
+    aspects=[{'person1_planet':a['person1_planet'],'aspect':a['aspect'],'person2_planet':a['person2_planet'],'orb_text':a['orb_text'],'relationship_weight':a['relationship_weight'],'person1_sign':a['person1_sign'],'person2_sign':a['person2_sign']} for a in calc['aspects']]
+    return {'ok':True,'aspect_count':len(aspects),'aspects':aspects,'angle_aspects':calc['angle_aspects'],'person1_has_houses':p1['time_known'],'person2_has_houses':p2['time_known']}
+
+async def _run_synastry(uid,payload,calc):
+    try:
+        if not db.consume(uid,premium=True):
+            await send_user_message(uid,'У вас осталось 0 запросов. Оформите подписку, чтобы продолжить 🌟'); return
+        print(f'[SYNASTRY] START uid={uid}',flush=True)
+        await send_user_message(uid,'Собираем две натальные карты и рассчитываем синастрию...\n\nПожалуйста, подождите, Лилит готовит Ваш персональный разбор отношений 💞')
+        calc_text=synastry_calculation_for_ai(calc); db.event(uid,'synastry_calculated',f'{calc["name1"]}|{calc["name2"]}')
+        answer=await ask_synastry(calc_text)
+        db.save_synastry_reading(uid,calc['name1'],calc['name2'],json.dumps(payload,ensure_ascii=False),json.dumps(calc,ensure_ascii=False),answer)
+        await send_user_message(uid,answer)
+        user_now=db.get(uid); left=(int(user_now['requests'])+int(user_now['paid_requests'])) if user_now else 0
+        await send_user_message(uid,f'Ваше количество запросов: {left}\n\nЕсли хочешь посмотреть другую пару — снова открой «Синастрия» 💞')
+        print(f'[SYNASTRY] DONE uid={uid}',flush=True)
+    except Exception as e:
+        print(f'[SYNASTRY] ERROR uid={uid}: {type(e).__name__}: {e}',flush=True)
+        try: db.add(uid,1); await send_user_message(uid,'Не удалось завершить синастрию. Запрос возвращён на баланс. Попробуй ещё раз немного позже.')
+        except Exception as inner: print(f'[SYNASTRY] RECOVERY ERROR uid={uid}: {type(inner).__name__}: {inner}',flush=True)
+
+@app.post('/api/synastry/calculate')
+async def synastry_calculate_api(request:Request):
+    body=await request.json(); tg=validate_init_data(body.get('initData',''))
+    if not tg: raise HTTPException(403,'Недействительный Telegram initData')
+    uid=int(tg['id'])
+    if not db.get(uid): raise HTTPException(404,'Пользователь не найден')
+    p1,p2=_relation_payload_from_body(body); calc=calculate_synastry(p1,p2,p1['name'],p2['name'])
+    db.save_synastry_profile(uid,p1['name'],p1,p2['name'],p2); payload=_relation_input_json(p1,p2)
+    task=asyncio.create_task(_run_synastry(uid,payload,calc)); RELATION_TASKS.add(task); task.add_done_callback(RELATION_TASKS.discard)
+    return {'ok':True,'accepted':True,'message':'Синастрия запущена'}
+
+@app.get('/api/synastry-transits/profile')
+async def synastry_transits_profile_api(request:Request): return await synastry_profile_api(request)
+
+@app.post('/api/synastry-transits/preview')
+async def synastry_transits_preview_api(request:Request):
+    body=await request.json(); tg=validate_init_data(body.get('initData',''))
+    if not tg: raise HTTPException(403,'Недействительный Telegram initData')
+    uid=int(tg['id'])
+    if not db.get(uid): raise HTTPException(404,'Пользователь не найден')
+    p1,p2=_relation_payload_from_body(body)
+    try: transit_date=dt_date.fromisoformat(str(body.get('transit_date','')).strip())
+    except Exception as exc: raise HTTPException(400,'Некорректная дата прогноза') from exc
+    calc=calculate_synastry_transits(p1,p2,transit_date,p1['name'],p2['name'])
+    rows=[]
+    for person,key in ((1,'person1_relationship_transits'),(2,'person2_relationship_transits')):
+        for a in calc[key]: rows.append({'person':person,'transit_planet':a['transit_planet'],'aspect':a['aspect'],'natal_planet':a['natal_planet'],'orb_text':a['orb_text'],'state':a['state'],'house':a.get('house')})
+    rows.sort(key=lambda a:(a['person'],a['transit_planet'],a['natal_planet'],a['orb_text']))
+    return {'ok':True,'transit_date':calc['transit_date'],'aspects':rows}
+
+async def _run_synastry_transits(uid,payload,calc):
+    try:
+        if not db.consume(uid,premium=True):
+            await send_user_message(uid,'У вас осталось 0 запросов. Оформите подписку, чтобы продолжить 🌟'); return
+        print(f'[SYNASTRY TRANSITS] START uid={uid} date={calc["transit_date"]}',flush=True)
+        await send_user_message(uid,'Загружаем две натальные карты и транзиты, делаем расчет...\n\nПожалуйста, подождите, Лилит готовит прогноз для ваших отношений 🔭')
+        calc_text=synastry_transits_calculation_for_ai(calc); db.event(uid,'synastry_transits_calculated',f'{calc["transit_date"]}|{calc["name1"]}|{calc["name2"]}')
+        answer=await ask_synastry_transits(calc_text)
+        db.save_synastry_transit_reading(uid,calc['name1'],calc['name2'],calc['transit_date'],json.dumps(payload,ensure_ascii=False),json.dumps(calc,ensure_ascii=False),answer)
+        await send_user_message(uid,answer)
+        user_now=db.get(uid); left=(int(user_now['requests'])+int(user_now['paid_requests'])) if user_now else 0
+        await send_user_message(uid,f'Ваше количество запросов: {left}\n\nЕсли хочешь посмотреть другую дату — снова открой «Транзиты синастрии» 🔭')
+        print(f'[SYNASTRY TRANSITS] DONE uid={uid} date={calc["transit_date"]}',flush=True)
+    except Exception as e:
+        print(f'[SYNASTRY TRANSITS] ERROR uid={uid}: {type(e).__name__}: {e}',flush=True)
+        try: db.add(uid,1); await send_user_message(uid,'Не удалось завершить транзиты синастрии. Запрос возвращён на баланс. Попробуй ещё раз немного позже.')
+        except Exception as inner: print(f'[SYNASTRY TRANSITS] RECOVERY ERROR uid={uid}: {type(inner).__name__}: {inner}',flush=True)
+
+@app.post('/api/synastry-transits/calculate')
+async def synastry_transits_calculate_api(request:Request):
+    body=await request.json(); tg=validate_init_data(body.get('initData',''))
+    if not tg: raise HTTPException(403,'Недействительный Telegram initData')
+    uid=int(tg['id'])
+    if not db.get(uid): raise HTTPException(404,'Пользователь не найден')
+    p1,p2=_relation_payload_from_body(body)
+    try: transit_date=dt_date.fromisoformat(str(body.get('transit_date','')).strip())
+    except Exception as exc: raise HTTPException(400,'Некорректная дата прогноза') from exc
+    if not 1900 <= transit_date.year <= 2200: raise HTTPException(400,'Дата прогноза должна быть в диапазоне 1900–2200')
+    calc=calculate_synastry_transits(p1,p2,transit_date,p1['name'],p2['name'])
+    db.save_synastry_profile(uid,p1['name'],p1,p2['name'],p2); payload=_relation_input_json(p1,p2,transit_date)
+    task=asyncio.create_task(_run_synastry_transits(uid,payload,calc)); RELATION_TASKS.add(task); task.add_done_callback(RELATION_TASKS.discard)
+    return {'ok':True,'accepted':True,'message':'Транзиты синастрии запущены'}
 
 @app.get('/api/miniapp/config')
 async def mini_config(deck:str='waite'):
@@ -843,6 +1039,8 @@ async def admin_user(request:Request, uid:int):
     payments=db.user_payments(uid)
     events=db.user_events(uid)
     transit_readings=db.user_transit_readings(uid)
+    synastry_readings=db.user_synastry_readings(uid)
+    synastry_transit_readings=db.user_synastry_transit_readings(uid)
     total=int(u['requests'])+int(u['paid_requests'])
     name=html.escape(u['name'] or str(uid))
     username='@'+html.escape(u['username']) if u['username'] else '—'
@@ -876,6 +1074,18 @@ async def admin_user(request:Request, uid:int):
         transit_rows.append(f'<div class="reading"><div class="meta"><b>Транзиты</b> · {td} · {city} · {dt}</div><div class="answer">{ans}</div></div>')
     transit_html=''.join(transit_rows) if transit_rows else '<p class="muted">Расчётов транзитов пока нет.</p>'
 
+    syn_rows=[]
+    for sr in synastry_readings:
+        dt=html.escape((sr['created_at'] or '')[:19].replace('T',' ')); n1=html.escape(sr['name1'] or 'Человек 1'); n2=html.escape(sr['name2'] or 'Человек 2'); ans=html.escape(sr['answer'] or '')
+        syn_rows.append(f'<div class="reading"><div class="meta"><b>Синастрия</b> · {n1} + {n2} · {dt}</div><div class="answer">{ans}</div></div>')
+    syn_html=''.join(syn_rows) if syn_rows else '<p class="muted">Синастрий пока нет.</p>'
+
+    st_rows=[]
+    for sr in synastry_transit_readings:
+        dt=html.escape((sr['created_at'] or '')[:19].replace('T',' ')); td=html.escape(sr['transit_date'] or ''); n1=html.escape(sr['name1'] or 'Человек 1'); n2=html.escape(sr['name2'] or 'Человек 2'); ans=html.escape(sr['answer'] or '')
+        st_rows.append(f'<div class="reading"><div class="meta"><b>Транзиты синастрии</b> · {td} · {n1} + {n2} · {dt}</div><div class="answer">{ans}</div></div>')
+    st_html=''.join(st_rows) if st_rows else '<p class="muted">Транзитов синастрии пока нет.</p>'
+
     pay_rows=[]
     for p in payments:
         dt=html.escape((p['created_at'] or '')[:19].replace('T',' '))
@@ -895,6 +1105,8 @@ async def admin_user(request:Request, uid:int):
 <section><h2>💬 Диалог с ботом</h2><div class="dialogue">{chat_html}</div></section>
 <section><h2>🔮 История раскладов</h2><p class="muted">История раскладов сохраняется отдельно и включает записи, сделанные до включения полного журнала сообщений.</p>{readings_html}</section>
 <section><h2>🌌 Транзиты</h2>{transit_html}</section>
+<section><h2>💞 Синастрия</h2>{syn_html}</section>
+<section><h2>🔭 Транзиты синастрии</h2>{st_html}</section>
 <section><h2>💳 Платежи</h2><table><tr><th>Дата</th><th>Сумма</th><th>Запросов</th><th>Статус</th></tr>{payments_html}</table></section>
 <section><h2>⚙️ События</h2><table><tr><th>Дата</th><th>Событие</th><th>Данные</th></tr>{events_html}</table></section>
 </div></body></html>'''
@@ -1036,6 +1248,12 @@ async def main():
         for task in list(TRANSIT_TASKS):
             task.cancel()
         for task in list(TRANSIT_TASKS):
+            try: await task
+            except asyncio.CancelledError: pass
+
+        for task in list(RELATION_TASKS):
+            task.cancel()
+        for task in list(RELATION_TASKS):
             try: await task
             except asyncio.CancelledError: pass
 
