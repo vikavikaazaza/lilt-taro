@@ -309,11 +309,6 @@ def _build_pdf(path: str | Path, title: str, subtitle: str, meta_lines: Iterable
             spaceAfter=8 * mm,
         ),
     ))
-    story.append(Paragraph(
-        "Персональный разбор подготовлен на основании рассчитанных астрологических показателей. "
-        "В PDF вынесен основной интерпретационный текст, чтобы его было удобно сохранить или отправить другому человеку.",
-        note_style,
-    ))
     story.append(Spacer(1, 8 * mm))
 
     sections = _split_sections(answer)
@@ -345,7 +340,6 @@ def build_synastry_pdf(path: str | Path, answer: str, calc: dict) -> str:
         f"{name1} + {name2}",
         f"{name1}: {p1.get('birth_date', '')} · {p1.get('birth_time') or 'время неизвестно'} · {p1.get('city', '')}",
         f"{name2}: {p2.get('birth_date', '')} · {p2.get('birth_time') or 'время неизвестно'} · {p2.get('city', '')}",
-        f"Синастрических аспектов: {calc.get('aspect_count', 0)} · аспектов к углам: {calc.get('angle_aspect_count', 0)}",
     ]
     return _build_pdf(path, "Синастрия", "ЛИЛИТ · персональный разбор отношений", meta, answer)
 
