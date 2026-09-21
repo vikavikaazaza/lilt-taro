@@ -47,32 +47,28 @@ NOMINATIM_LAST=0.0
 
 
 async def _geocode_city(query: str, limit: int = 5):
-    """Ищет город через Nominatim и возвращает координаты для синастрии."""
+    """Search cities for the Mini App using OpenStreetMap Nominatim."""
     global NOMINATIM_LAST
     q = str(query or '').strip()
     if len(q) < 2:
         return []
-
     async with NOMINATIM_LOCK:
         loop = asyncio.get_running_loop()
         wait = 1.05 - (loop.time() - NOMINATIM_LAST)
         if wait > 0:
             await asyncio.sleep(wait)
-
         params = {
             'q': q,
             'format': 'jsonv2',
-            'limit': str(max(1, min(int(limit or 5), 5))),
+            'limit': str(max(1, min(int(limit), 5))),
             'addressdetails': '1',
             'accept-language': 'ru',
         }
-        headers = {'User-Agent': 'LilitTaroBot/1.0 (city search)'}
+        headers = {'User-Agent': 'LilitTaroBot/1.0 (synastry mini app)'}
         timeout = aiohttp.ClientTimeout(total=12, connect=8, sock_connect=8, sock_read=10)
         try:
             async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
-                async with session.get(
-                    'https://nominatim.openstreetmap.org/search', params=params
-                ) as resp:
+                async with session.get('https://nominatim.openstreetmap.org/search', params=params) as resp:
                     NOMINATIM_LAST = loop.time()
                     if resp.status >= 400:
                         raise RuntimeError(f'geocoder HTTP {resp.status}')
@@ -80,7 +76,6 @@ async def _geocode_city(query: str, limit: int = 5):
         except Exception as exc:
             print(f'[GEOCODE] error: {type(exc).__name__}: {exc}', flush=True)
             return []
-
     out = []
     for item in data if isinstance(data, list) else []:
         try:
@@ -92,6 +87,7 @@ async def _geocode_city(query: str, limit: int = 5):
         except Exception:
             continue
     return out
+
 
 class DialogueMiddleware(BaseMiddleware):
     async def __call__(self, handler, event, data):
@@ -494,7 +490,6 @@ def _relation_input_json(p1,p2,transit_date=None):
 @app.get('/synastry', response_class=HTMLResponse)
 async def synastry_miniapp():
     return FileResponse(BASE/'web'/'synastry.html',headers={'Cache-Control':'no-store, no-cache, must-revalidate, max-age=0'})
-
 
 
 @app.get('/api/transits/cities')
