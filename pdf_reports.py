@@ -26,16 +26,75 @@ from reportlab.lib.colors import HexColor, Color
 A4_W, A4_H = A4
 
 
-def _font_path(name: str) -> str:
-    candidates = [
-        f"/usr/share/fonts/truetype/dejavu/{name}.ttf",
-        f"/usr/share/fonts/truetype/dejavu/{name}.TTF",
-        f"/usr/share/fonts/truetype/liberation2/{name}.ttf",
-    ]
-    for path in candidates:
-        if Path(path).is_file():
+def _font_path(name: str, bold: bool = False) -> str:
+    """Find a Cyrillic-capable TTF on Linux/BOTHOST without bundling a font."""
+    requested = "bold" if bold else "regular"
+
+    # 1) Fontconfig is the most reliable option on Linux because it selects a
+    # font that actually supports the requested language.
+    try:
+        import subprocess
+        pattern = f"sans:style={requested}:lang=ru"
+        result = subprocess.run(
+            ["fc-match", "-f", "%{{file}}", pattern],
+            check=False, capture_output=True, text=True, timeout=5,
+        )
+        path = result.stdout.strip()
+        if path and Path(path).is_file():
             return path
-    raise FileNotFoundError(f"Шрифт {name} не найден на сервере")
+    except Exception:
+        pass
+
+    # 2) Common system-font paths as a fallback for images without fontconfig.
+    candidates = []
+    if bold:
+        candidates.extend([
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+            "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+        ])
+    else:
+        candidates.extend([
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+        ])
+
+    for candidate in candidates:
+        if Path(candidate).is_file():
+            return candidate
+
+    # 3) Last-resort recursive search under standard font directories. Keep it
+    # narrow enough to be cheap while covering typical BOTHOST images.
+    roots = [Path("/usr/share/fonts"), Path("/usr/local/share/fonts"), Path.home() / ".fonts"]
+    preferred = []
+    for root in roots:
+        if not root.is_dir():
+            continue
+        try:
+            for fp in root.rglob("*.ttf"):
+                low = fp.name.lower()
+                if bold:
+                    if "bold" not in low:
+                        continue
+                else:
+                    if "bold" in low or "italic" in low or "oblique" in low:
+                        continue
+                if any(tag in low for tag in ("dejavu", "noto", "liberation", "freesans", "roboto", "carlito")):
+                    preferred.append(fp)
+        except Exception:
+            continue
+    if preferred:
+        return str(sorted(preferred, key=lambda x: str(x).lower())[0])
+
+    raise FileNotFoundError(
+        "Не найден системный TTF-шрифт с поддержкой кириллицы на сервере. "
+        "Проверьте наличие DejaVu Sans, Noto Sans или Liberation Sans."
+    )
 
 
 _REGULAR = "LilitRegular"
@@ -44,9 +103,9 @@ _BOLD = "LilitBold"
 
 def _register_fonts() -> None:
     if _REGULAR not in pdfmetrics.getRegisteredFontNames():
-        pdfmetrics.registerFont(TTFont(_REGULAR, _font_path("DejaVuSans")))
+        pdfmetrics.registerFont(TTFont(_REGULAR, _font_path("DejaVuSans", bold=False)))
     if _BOLD not in pdfmetrics.getRegisteredFontNames():
-        pdfmetrics.registerFont(TTFont(_BOLD, _font_path("DejaVuSans-Bold")))
+        pdfmetrics.registerFont(TTFont(_BOLD, _font_path("DejaVuSans-Bold", bold=True)))
 
 
 def _draw_background(c: canvas.Canvas, doc) -> None:
