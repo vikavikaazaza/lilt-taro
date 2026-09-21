@@ -281,8 +281,8 @@ def _build_pdf(path: str | Path, title: str, subtitle: str, meta_lines: Iterable
         "Note",
         parent=styles["Normal"],
         fontName=_REGULAR,
-        fontSize=10,
-        leading=14,
+        fontSize=11,
+        leading=16,
         textColor=HexColor("#C8BED1"),
     )
 
