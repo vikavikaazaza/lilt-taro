@@ -152,7 +152,7 @@ preview.addEventListener('click',async()=>{
       el.innerHTML=`${a.transit_planet} ${a.aspect} натальный ${a.natal_planet}<small>Орб ${a.orb_text} · ${stateText(a.state)}${house}${retro}</small>`;
       aspectsBox.appendChild(el);
     }
-    showStatus('Аспекты рассчитаны. Ниже — самые точные влияния на выбранную дату.');
+    showStatus('Аспекты рассчитаны. Ниже — все найденные значимые влияния на выбранную дату.');
   }catch(e){console.error(e);showStatus(e.message||'Не удалось рассчитать аспекты.');}
   finally{preview.disabled=false;preview.textContent='Показать аспекты';}
 });
