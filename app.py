@@ -519,12 +519,13 @@ async def _run_transit(uid, payload, calc):
         calc_text=calculation_for_ai(calc)
         db.event(uid,'transit_calculated',f"{calc['transit_date']}|{calc['city']}")
         print(f'[TRANSITS] START uid={uid} date={calc["transit_date"]} city={calc["city"]}',flush=True)
-        await send_user_message(uid,'Загружаем Вашу натальную карту, делаем расчет...\n\nПожалуйста, подождите, Лилит готовит Ваш персональный прогноз на выбранную дату 🌌')
         answer=await ask_transit(calc_text)
         db.save_transit_reading(
             uid,calc['transit_date'],calc['city'],json.dumps(payload,ensure_ascii=False),
             json.dumps(calc,ensure_ascii=False),answer
         )
+        if len(answer)>3300:
+            raise RuntimeError('Прогноз транзитов превысил допустимые 3300 символов')
         await send_user_message(uid,answer)
         user_now=db.get(uid)
         left=(int(user_now['requests'])+int(user_now['paid_requests'])) if user_now else 0
@@ -558,7 +559,9 @@ async def transit_calculate_api(request:Request):
         'birth_date':birth_date.isoformat(),'birth_time':birth_time.strftime('%H:%M') if birth_time else '',
         'time_known':time_known,'transit_date':transit_date.isoformat(),'city':city,'lat':lat,'lon':lon,'timezone':tz_name
     }
-    # Do not let the Mini App wait for CHAD. The arithmetic is fast and is done before returning.
+    # Send the progress message before closing the Mini App so the client immediately
+    # knows that the calculation has started. CHAD runs in the background afterward.
+    await send_user_message(uid,'Загружаем Вашу натальную карту, делаем расчет...\n\nПожалуйста, подождите, Лилит готовит Ваш персональный прогноз на выбранную дату 🌌')
     task=asyncio.create_task(_run_transit(uid,payload,calc)); TRANSIT_TASKS.add(task); task.add_done_callback(TRANSIT_TASKS.discard)
     return {'ok':True,'accepted':True,'message':'Расчёт запущен'}
 
