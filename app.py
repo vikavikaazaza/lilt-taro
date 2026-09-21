@@ -224,6 +224,21 @@ async def deck_cb(c):
         'Например: Что ждет меня в следующем месяце?'
     )
 
+@router.callback_query(F.data=='day')
+async def day_cb(c):
+    await c.answer()
+    uid=c.from_user.id
+    u=db.get(uid)
+    if not u or int(u['requests'])+int(u['paid_requests'])<=0:
+        await c.message.answer('У вас осталось 0 запросов.')
+        await subscription(c.message)
+        return
+    db.set_pending(uid,'day','free','Карта дня')
+    await c.message.answer(
+        'Начинаем гадание, переходим к карте дня. 🧘🏼',
+        reply_markup=mini_buttons('day','free')
+    )
+
 @router.callback_query(F.data=='transits')
 async def transits_cb(c):
     await c.answer()
