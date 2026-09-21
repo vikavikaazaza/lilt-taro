@@ -502,7 +502,7 @@ async def _send_pdf_report(uid: int, pdf_path: Path, caption: str, answer: str) 
         print(f'[PDF] dialogue log error uid={uid}: {type(exc).__name__}: {exc}', flush=True)
     await bot.send_document(int(uid), FSInputFile(pdf_path), caption=caption)
 
-async def _run_annual(uid, payload, calc):
+async def _run_annual(uid, calc):
     try:
         year=calc['year']
         db.event(uid,'annual_forecast_started',str(year))
