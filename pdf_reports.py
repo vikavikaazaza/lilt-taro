@@ -362,18 +362,3 @@ def build_transit_pdf(path: str | Path, answer: str, calc: dict) -> str:
         f"Аспектов на выбранную дату: {len(calc.get('aspects', []))}",
     ]
     return _build_pdf(path, "Транзиты", "ЛИЛИТ · персональный прогноз на выбранную дату", meta, answer)
-
-
-def build_annual_pdf(path: str | Path, answer: str, calc: dict) -> str:
-    year = str(calc.get('year') or '')
-    name = str(calc.get('name') or 'Клиент')
-    birth_date = str(calc.get('birth_date') or '')
-    birth_time = str(calc.get('birth_time') or '')
-    city = str(calc.get('city') or '')
-    meta = [
-        f"{name} · прогноз на {year} год",
-        f"Дата рождения: {birth_date} · {birth_time or 'время неизвестно'}",
-        f"Город рождения: {city}",
-        f"Месячных расчётных точек: {len(calc.get('months', []))} · сильных периодов: {len(calc.get('strongest_periods', []))}",
-    ]
-    return _build_pdf(path, f"Прогноз на {year} год", "ЛИЛИТ · персональный годовой разбор", meta, answer)
