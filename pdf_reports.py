@@ -26,15 +26,27 @@ from reportlab.lib.colors import HexColor, Color
 A4_W, A4_H = A4
 
 
-def _font_path(name: str, bold: bool = False) -> str:
-    """Find a Cyrillic-capable TTF on Linux/BOTHOST without bundling a font."""
-    requested = "bold" if bold else "regular"
+def _font_path(bold: bool = False) -> str:
+    """Resolve a Cyrillic-capable font reliably on BOTHOST.
 
-    # 1) Fontconfig is the most reliable option on Linux because it selects a
-    # font that actually supports the requested language.
+    Preferred source is the pip package fontpkg-noto-sans, which ships the
+    Noto Sans font inside the Python environment. This avoids depending on
+    OS-installed fonts that may be absent in a minimal container.
+    """
+    # 1) Reproducible, container-safe source: packaged Noto Sans.
+    try:
+        import fontpkg
+        path = fontpkg.path("Noto Sans", weight=700 if bold else 400)
+        path = str(path)
+        if path and Path(path).is_file():
+            return path
+    except Exception:
+        pass
+
+    # 2) Fontconfig fallback for hosts that already provide suitable fonts.
     try:
         import subprocess
-        pattern = f"sans:style={requested}:lang=ru"
+        pattern = f"sans:style={'bold' if bold else 'regular'}:lang=ru"
         result = subprocess.run(
             ["fc-match", "-f", "%{{file}}", pattern],
             check=False, capture_output=True, text=True, timeout=5,
@@ -45,55 +57,38 @@ def _font_path(name: str, bold: bool = False) -> str:
     except Exception:
         pass
 
-    # 2) Common system-font paths as a fallback for images without fontconfig.
-    candidates = []
-    if bold:
-        candidates.extend([
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-            "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
-            "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
-            "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
-        ])
-    else:
-        candidates.extend([
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-            "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
-            "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
-            "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
-        ])
-
+    # 3) Common system-font paths.
+    candidates = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf" if bold else "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+    ]
     for candidate in candidates:
         if Path(candidate).is_file():
             return candidate
 
-    # 3) Last-resort recursive search under standard font directories. Keep it
-    # narrow enough to be cheap while covering typical BOTHOST images.
+    # 4) Last-resort recursive search.
     roots = [Path("/usr/share/fonts"), Path("/usr/local/share/fonts"), Path.home() / ".fonts"]
-    preferred = []
     for root in roots:
         if not root.is_dir():
             continue
         try:
             for fp in root.rglob("*.ttf"):
                 low = fp.name.lower()
-                if bold:
-                    if "bold" not in low:
-                        continue
-                else:
-                    if "bold" in low or "italic" in low or "oblique" in low:
-                        continue
+                if bold and "bold" not in low:
+                    continue
+                if not bold and any(tag in low for tag in ("bold", "italic", "oblique")):
+                    continue
                 if any(tag in low for tag in ("dejavu", "noto", "liberation", "freesans", "roboto", "carlito")):
-                    preferred.append(fp)
+                    return str(fp)
         except Exception:
             continue
-    if preferred:
-        return str(sorted(preferred, key=lambda x: str(x).lower())[0])
 
     raise FileNotFoundError(
-        "Не найден системный TTF-шрифт с поддержкой кириллицы на сервере. "
-        "Проверьте наличие DejaVu Sans, Noto Sans или Liberation Sans."
+        "Не найден шрифт с поддержкой кириллицы. Установите зависимость "
+        "fontpkg-noto-sans==2.15 в requirements.txt."
     )
 
 
