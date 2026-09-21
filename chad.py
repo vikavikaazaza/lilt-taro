@@ -1,11 +1,7 @@
 import asyncio
+import re
 import aiohttp
 import config
-import re
-import json
-from datetime import datetime, timezone
-from pathlib import Path
-from uuid import uuid4
 
 MANARA_NAMES=[
 'Дурак','Маг','Верховная Жрица','Императрица','Император','Верховный Жрец','Возлюбленные','Колесница','Справедливость','Отшельник','Зеркало','Сила','Наказание','Смерть','Умеренность','Дьявол','Башня','Звезда','Луна','Солнце','Суд','Мир',
@@ -28,102 +24,6 @@ if PROMPTS is None:
     PROMPTS=getattr(config, 'prompts', {})
 if not isinstance(PROMPTS, dict):
     PROMPTS={}
-
-
-
-CHAD_WORDS_URL = 'https://ask.chadgpt.ru/api/public/words'
-USAGE_LOG_DIR = Path(__file__).resolve().parent / 'logs'
-USAGE_LOG_FILE = USAGE_LOG_DIR / 'chad_usage.log'
-
-
-def _usage_log(line):
-    stamp=datetime.now(timezone.utc).isoformat(timespec='seconds')
-    full=f'{stamp} {line}'
-    print(full, flush=True)
-    try:
-        USAGE_LOG_DIR.mkdir(parents=True, exist_ok=True)
-        with USAGE_LOG_FILE.open('a', encoding='utf-8') as f:
-            f.write(full + '\n')
-    except Exception as exc:
-        print(f'[CHAD USAGE] file log error: {type(exc).__name__}: {exc}', flush=True)
-
-
-async def _chad_words_balance(session):
-    """Read current CHAD word/spark balance for fallback usage accounting."""
-    try:
-        async with session.post(
-            CHAD_WORDS_URL,
-            json={'api_key': CHAD_API_KEY},
-            headers={'Content-Type': 'application/json', 'Authorization': f'Bearer {CHAD_API_KEY}'},
-        ) as response:
-            body=await response.text()
-            if response.status >= 400:
-                _usage_log(f'[CHAD USAGE] balance status={response.status}')
-                return None
-            try:
-                data=await response.json(content_type=None)
-            except Exception:
-                data={}
-            if not isinstance(data, dict) or not data.get('is_success', True):
-                return None
-            return {
-                'used_words': data.get('used_words'),
-                'total_words': data.get('total_words'),
-                'remaining_words': data.get('remaining_words'),
-                'reserved_words': data.get('reserved_words'),
-            }
-    except Exception as exc:
-        _usage_log(f'[CHAD USAGE] balance error={type(exc).__name__}: {exc}')
-        return None
-
-
-def _response_usage(data):
-    if not isinstance(data, dict):
-        return None, None, None
-    used_words = data.get('used_words_count')
-    if used_words is None:
-        used_words = data.get('used_sparks_count')
-    used_tokens = data.get('used_tokens_count')
-    remaining = data.get('remaining_words')
-    return used_words, used_tokens, remaining
-
-
-def _usage_from_balance(before, after):
-    if not before or not after:
-        return None
-    b=before.get('remaining_words')
-    a=after.get('remaining_words')
-    if isinstance(b, (int, float)) and isinstance(a, (int, float)):
-        return max(0, int(b-a))
-    return None
-
-
-async def _log_chad_request_usage(session, request_id, kind, attempt, response_data, before_balance, http_status):
-    after_balance=await _chad_words_balance(session)
-    used_words, used_tokens, response_remaining=_response_usage(response_data)
-    diff=_usage_from_balance(before_balance, after_balance)
-    if used_words is None:
-        used_words=diff
-        source='balance_diff' if diff is not None else 'unavailable'
-    else:
-        source='api_response'
-
-    if used_words is not None:
-        used_label=f'{used_words} sparks/words'
-    elif used_tokens is not None:
-        used_label=f'{used_tokens} tokens'
-    else:
-        used_label='unknown'
-
-    before_remaining=before_balance.get('remaining_words') if before_balance else None
-    after_remaining=after_balance.get('remaining_words') if after_balance else response_remaining
-    reserved=after_balance.get('reserved_words') if after_balance else None
-    _usage_log(
-        f'[CHAD USAGE] id={request_id} kind={kind} attempt={attempt} '
-        f'http={http_status} used={used_label} source={source} '
-        f'before_remaining={before_remaining} after_remaining={after_remaining} '
-        f'reserved={reserved}'
-    )
 
 
 def _card_lines(cards):
@@ -189,13 +89,11 @@ async def ask(deck, q, cards, paid=False, day=False):
         'Ответь строго в соответствии с системным промптом, но не выбирай карты самостоятельно.'
     )
 
-    request_id=uuid4().hex[:10]
-    print(f'[CHAD] request id={request_id} deck={deck} key={key} cards={names!r}', flush=True)
+    print(f'[CHAD] request deck={deck} key={key} cards={names!r}', flush=True)
     timeout=aiohttp.ClientTimeout(total=125, connect=20, sock_connect=20, sock_read=120)
 
     async with aiohttp.ClientSession(timeout=timeout) as session:
         for attempt in range(1, 3):
-            before_balance=await _chad_words_balance(session)
             payload={
                 'message': user_message if attempt == 1 else (
                     user_message + '\n\nКРИТИЧЕСКАЯ ПРОВЕРКА: в прошлой попытке карты были указаны неверно. '
@@ -214,16 +112,12 @@ async def ask(deck, q, cards, paid=False, day=False):
             ) as response:
                 text=await response.text()
                 print(f'[CHAD] response status={response.status} body_len={len(text)} attempt={attempt}', flush=True)
-                try:
-                    usage_data=await response.json(content_type=None)
-                except Exception:
-                    usage_data={}
-                await _log_chad_request_usage(
-                    session, request_id, f'{deck}/{key}', attempt, usage_data, before_balance, response.status
-                )
                 if response.status>=400:
                     raise RuntimeError(f'CHAD API HTTP {response.status}: {text[:1000]}')
-                data=usage_data
+                try:
+                    data=await response.json(content_type=None)
+                except Exception:
+                    data={}
                 if isinstance(data,dict):
                     answer=data.get('message') or data.get('answer') or data.get('response') or data.get('text')
                     if answer:
@@ -247,3 +141,207 @@ async def ask(deck, q, cards, paid=False, day=False):
                 )
 
     raise RuntimeError('CHAD API вернул трактовку с другими картами. Запрос безопасно отменён.')
+
+
+TRANSIT_SYSTEM_PROMPT = '''
+Ты — Лилит, персональный эзотерический консультант. Ты получаешь ГОТОВЫЙ астрологический расчёт транзитов к натальной карте клиента и делаешь персональный прогноз на выбранную дату.
+
+Главное правило: не пересчитывай самостоятельно положения планет, аспекты, орбисы, знаки, дома или Асцендент. Используй только переданные расчётные данные. Не добавляй показатели, которых нет в расчёте.
+
+Главная задача — переводить астрологические показатели в конкретные жизненные сценарии, а не в расплывчатое описание «энергий». Ищи реальные проявления: разговор или решение на работе, смена обязанностей, собеседование, предложение, увольнение, переезд, поездка, документы, покупка, денежный вопрос, знакомство, сближение, конфликт, расставание, возвращение человека, запуск или завершение проекта, официальное решение и другие события — только если это поддержано сочетанием аспектов, домов, точности и состояния. Не используй список примеров механически.
+
+Сходящийся аспект — тема набирает силу; точный — пик около выбранной даты; расходящийся — тема уже могла проявиться, сейчас идут последствия или переоценка. Ретроградность может указывать на возврат, пересмотр, задержку или повторное прохождение темы. Для сроков используй только: сегодня, ближайшие дни, недели, месяцы. Не придумывай точную дату будущего события.
+
+Если есть дома, используй их для конкретизации жизненной сферы. Если время рождения неизвестно, не используй дома и Асцендент и учитывай приблизительность натальной Луны.
+
+Не обещай неизбежное событие. Используй «может произойти», «вероятна ситуация», «может прийти известие», но будь максимально конкретной.
+
+Не используй Markdown вообще: никаких #, *, жирного, курсива и маркеров списков. Только обычные заголовки и нумерация.
+
+ОБЯЗАТЕЛЬНО используй ровно эти 9 разделов, в этом порядке. Нельзя пропускать разделы, объединять их или завершать ответ раньше раздела 9:
+
+1. Прогноз на [дата]
+1–2 коротких предложения о главном сюжете даты.
+
+2. Какие события могут произойти
+Дай 3–4 конкретных сценария. Формат каждого: событие → поддерживающий аспект или сочетание аспектов → срок. Не расписывай длинные объяснения.
+
+3. Что уже формируется
+1–2 долгих процесса и при наличии 1 краткий всплеск. Покажи, что уже начинает складываться и в какой срок.
+
+4. Отношения
+Только конкретные проявления в любви и близких отношениях, если они поддержаны расчётом.
+
+5. Работа и деньги
+Только конкретные события, решения и риски, подтверждённые картой.
+
+6. Эмоциональный фон
+Почему в эту дату возможны прилив сил, спад, раздражение, вдохновение, тревожность или чувствительность.
+
+7. Сроки и возможности
+Коротко раздели: что делать сейчас; что решать после проверки; что не форсировать. Для каждого укажи горизонт: сегодня, дни, недели или месяцы.
+
+8. Точки роста
+2–3 качества или урока, которые особенно важны сейчас.
+
+9. Итог
+2–3 конкретных предложения о наиболее заметном сценарии и о том, на что смотреть дальше.
+
+Полный список аспектов уже показывается клиенту отдельным блоком в приложении. Не трать место на их длинное повторение в прогнозе.
+
+ОБЪЁМ: стремись к 2700–3000 символам. Абсолютный максимум — 3200 символов. Ответ ОБЯЗАТЕЛЬНО должен закончиться разделом 9 и не должен обрываться.
+'''.strip()
+
+TRANSIT_SECTION_HEADERS = (
+    '1. Прогноз на',
+    '2. Какие события могут произойти',
+    '3. Что уже формируется',
+    '4. Отношения',
+    '5. Работа и деньги',
+    '6. Эмоциональный фон',
+    '7. Сроки и возможности',
+    '8. Точки роста',
+    '9. Итог',
+)
+
+
+def _clean_transit_answer(text):
+    text=str(text or '').replace('```','')
+    text=re.sub(r'(?m)^\s*#{1,6}\s*','',text)
+    text=re.sub(r'\*+', '', text)
+    text=re.sub(r'(?m)^\s*[-•]\s+', '', text)
+    return re.sub(r'\n{3,}', '\n\n', text).strip()
+
+
+def _has_all_transit_sections(text):
+    t=_clean_transit_answer(text)
+    return all(re.search(rf'(?m)^\s*{re.escape(h)}(?:.*)?$', t) for h in TRANSIT_SECTION_HEADERS)
+
+
+def _natural_trim(text, limit):
+    text=str(text or '').strip()
+    if len(text)<=limit:
+        return text
+    cut=text.rfind('\n\n', 0, limit)
+    if cut < int(limit*0.55):
+        cut=text.rfind('. ', 0, limit)
+        if cut>0:
+            cut+=1
+    if cut < int(limit*0.55):
+        cut=text.rfind(' ', 0, limit)
+    if cut<1:
+        cut=limit
+    return text[:cut].rstrip(' .,:;—-')+'…'
+
+
+def _hard_cap_transit_answer(text, max_chars=3300):
+    t=_clean_transit_answer(text)
+    if len(t)<=max_chars and _has_all_transit_sections(t):
+        return t
+    matches=list(re.finditer(r'(?m)^\s*(\d)\.\s+', t))
+    by_num={}
+    for i,m in enumerate(matches):
+        start=m.start()
+        end=matches[i+1].start() if i+1<len(matches) else len(t)
+        n=int(m.group(1))
+        if 1<=n<=9:
+            by_num[n]=t[start:end].strip()
+    budgets={1:280,2:760,3:400,4:320,5:320,6:260,7:300,8:240,9:250}
+    pieces=[]
+    for n in range(1,10):
+        block=by_num.get(n)
+        if not block:
+            raise ValueError(f'Не найден раздел прогноза {n}')
+        pieces.append(_natural_trim(block,budgets[n]))
+    result='\n\n'.join(pieces).strip()
+    if len(result)>max_chars:
+        for n in (9,8,7,6,5,4,3,1,2):
+            if len(result)<=max_chars:
+                break
+            extra=len(result)-max_chars
+            old=pieces[n-1]
+            pieces[n-1]=_natural_trim(old,max(120,len(old)-extra))
+            result='\n\n'.join(pieces).strip()
+    if len(result)>max_chars or not _has_all_transit_sections(result):
+        raise ValueError('Не удалось безопасно уложить прогноз в 3300 символов с сохранением 9 разделов')
+    return result
+
+
+async def _chad_transit_request(message, system_prompt, timeout=180, attempts=2):
+    timeout_cfg=aiohttp.ClientTimeout(total=timeout, connect=20, sock_connect=20, sock_read=max(30, timeout-10))
+    last_error=None
+    async with aiohttp.ClientSession(timeout=timeout_cfg) as session:
+        for attempt in range(1, attempts+1):
+            try:
+                payload={
+                    'message':message,
+                    'api_key':CHAD_API_KEY,
+                    'history':[{'role':'system','content':system_prompt}],
+                }
+                async with session.post(
+                    CHAD_API_URL,
+                    json=payload,
+                    headers={'Content-Type':'application/json','Authorization':f'Bearer {CHAD_API_KEY}'},
+                ) as response:
+                    body=await response.text()
+                    print(f'[CHAD TRANSIT] response status={response.status} body_len={len(body)} attempt={attempt}',flush=True)
+                    if response.status in (429,502,503,504):
+                        last_error=RuntimeError(f'CHAD API HTTP {response.status}: {body[:1000]}')
+                        if attempt<attempts:
+                            delay=8 if response.status==429 else 3
+                            print(f'[CHAD TRANSIT] retrying after HTTP {response.status} in {delay}s',flush=True)
+                            await asyncio.sleep(delay)
+                            continue
+                        raise last_error
+                    if response.status>=400:
+                        raise RuntimeError(f'CHAD API HTTP {response.status}: {body[:1000]}')
+                    try:
+                        data=await response.json(content_type=None)
+                    except Exception:
+                        data={}
+                    answer=''
+                    if isinstance(data,dict):
+                        answer=data.get('message') or data.get('answer') or data.get('response') or data.get('text') or ''
+                    if not answer and body.strip():
+                        answer=body.strip()
+                    if not str(answer).strip():
+                        raise RuntimeError('CHAD API вернул пустую интерпретацию транзитов')
+                    return str(answer).strip()
+            except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                last_error=exc
+                print(f'[CHAD TRANSIT] transport error attempt={attempt}: {type(exc).__name__}: {exc}',flush=True)
+                if attempt<attempts:
+                    await asyncio.sleep(3)
+                    continue
+                raise
+    if last_error:
+        raise last_error
+    raise RuntimeError('Не удалось получить ответ CHAD')
+
+
+async def ask_transit(calculation_text):
+    if not CHAD_API_URL:
+        raise RuntimeError('Не заполнен CHAD_API_URL')
+    if not CHAD_API_KEY:
+        raise RuntimeError('Не заполнен CHAD_API_KEY')
+    user_message=(
+        'Ниже приведён точный расчёт транзитов к натальной карте клиента. '
+        'Интерпретируй только эти данные и ничего не пересчитывай. '
+        'Сформируй прогноз строго по всем 9 разделам системного промпта.\n\n'+calculation_text
+    )
+    answer=await _chad_transit_request(user_message, TRANSIT_SYSTEM_PROMPT, timeout=180, attempts=2)
+    answer=_clean_transit_answer(answer)
+    if len(answer)<=3300 and _has_all_transit_sections(answer):
+        return answer
+
+    compact_prompt='''Ты — редактор уже готового астрологического прогноза. Не меняй его смысл и не добавляй новых астрологических фактов. Сохрани РОВНО все 9 пронумерованных разделов в исходном порядке. Сохрани ключевые конкретные события, поддерживающие аспекты и сроки. Удали повторы и второстепенные пояснения. Никакого Markdown. Итог — 2700–3150 символов, максимум 3200. Ответ обязательно должен закончиться разделом 9 и не обрываться.'''.strip()
+    compact=await _chad_transit_request(
+        'Сожми этот готовый прогноз до безопасного объёма, сохранив все 9 разделов:\n\n'+answer,
+        compact_prompt,
+        timeout=180,
+        attempts=2,
+    )
+    compact=_clean_transit_answer(compact)
+    if len(compact)<=3300 and _has_all_transit_sections(compact):
+        return compact
+    return _hard_cap_transit_answer(compact,3300)
