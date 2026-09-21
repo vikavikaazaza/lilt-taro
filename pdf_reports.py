@@ -243,8 +243,8 @@ def _build_pdf(path: str | Path, title: str, subtitle: str, meta_lines: Iterable
         "ReportSubtitle",
         parent=styles["Normal"],
         fontName=_REGULAR,
-        fontSize=15,
-        leading=20,
+        fontSize=11,
+        leading=15,
         textColor=HexColor("#D7CBE8"),
         alignment=TA_CENTER,
         spaceAfter=8 * mm,
@@ -262,8 +262,8 @@ def _build_pdf(path: str | Path, title: str, subtitle: str, meta_lines: Iterable
         "Section",
         parent=styles["Heading2"],
         fontName=_BOLD,
-        fontSize=16,
-        leading=21,
+        fontSize=17,
+        leading=22,
         textColor=HexColor("#E1C77B"),
         spaceBefore=2.5 * mm,
         spaceAfter=2 * mm,
@@ -273,7 +273,7 @@ def _build_pdf(path: str | Path, title: str, subtitle: str, meta_lines: Iterable
         parent=styles["BodyText"],
         fontName=_REGULAR,
         fontSize=15,
-        leading=20.5,
+        leading=21,
         textColor=HexColor("#F0EAF6"),
         spaceAfter=2.2 * mm,
     )
@@ -281,8 +281,8 @@ def _build_pdf(path: str | Path, title: str, subtitle: str, meta_lines: Iterable
         "Note",
         parent=styles["Normal"],
         fontName=_REGULAR,
-        fontSize=11,
-        leading=16,
+        fontSize=9,
+        leading=12,
         textColor=HexColor("#C8BED1"),
     )
 
@@ -309,7 +309,6 @@ def _build_pdf(path: str | Path, title: str, subtitle: str, meta_lines: Iterable
             spaceAfter=8 * mm,
         ),
     ))
-    story.append(Spacer(1, 4 * mm))
 
     sections = _split_sections(answer)
     for idx, (section_title, body) in enumerate(sections):
