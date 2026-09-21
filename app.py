@@ -13,10 +13,11 @@ from fastapi.staticfiles import StaticFiles
 import uvicorn
 
 import config, db
-from chad import ask, ask_transit, ask_synastry, ask_synastry_transits
-from transits import calculate_transits, calculation_for_ai
-from synastry import calculate_synastry, calculation_for_ai as synastry_calculation_for_ai
-from synastry_transits import calculate_synastry_transits, calculation_for_ai as synastry_transits_calculation_for_ai
+from chad import ask
+from transits import calculate_transits
+from synastry import calculate_synastry
+from pdf_reports import build_transit_pdf, build_synastry_pdf
+from astro_reports import build_transit_interpretation, build_synastry_interpretation
 
 BASE=Path(__file__).resolve().parent
 router=Router()
@@ -87,12 +88,12 @@ DECK_NAMES={'waite':'Таро Уэйта','manara':'Таро Манара','day'
 
 def menu():
     return InlineKeyboardMarkup(inline_keyboard=[
-      [InlineKeyboardButton(text='Таро Уэйта',callback_data='deck:waite'),InlineKeyboardButton(text='Таро Манара',callback_data='deck:manara')],
-      [InlineKeyboardButton(text='Карта дня',callback_data='day'),InlineKeyboardButton(text='Синастрия',callback_data='synastry')],
-      [InlineKeyboardButton(text='Транзиты',callback_data='transits'),InlineKeyboardButton(text='Транзиты синастрии',callback_data='synastry_transits')],
-      [InlineKeyboardButton(text='Реферальная программа',callback_data='friend')],
-      [InlineKeyboardButton(text='Оформить подписку',callback_data='pay')]])
-
+      [InlineKeyboardButton(text='Таро Уэйта 🔮',callback_data='deck:waite'),InlineKeyboardButton(text='Таро Манара 🍓',callback_data='deck:manara')],
+      [InlineKeyboardButton(text='Карта дня 🧘🏼',callback_data='day')],
+      [InlineKeyboardButton(text='🌌 Транзиты',callback_data='transits')],
+      [InlineKeyboardButton(text='💞 Синастрия',callback_data='synastry')],
+      [InlineKeyboardButton(text='Реферальная программа ❤️',callback_data='friend')],
+      [InlineKeyboardButton(text='Оформить подписку 🌟',callback_data='pay')]])
 
 def pay_menu():
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='3 вопроса — 99 рублей',callback_data='pack:3')],[InlineKeyboardButton(text='5 вопросов — 159 рублей',callback_data='pack:5')],[InlineKeyboardButton(text='10 вопросов — 329 рублей',callback_data='pack:10')]])
@@ -127,12 +128,13 @@ async def transit_start(m, uid=None):
     await answer_user(m, 'Посмотрим, какие темы и влияния могут быть активны для тебя в выбранную дату 🌌\n\nВведи данные рождения и дату, на которую хочешь сделать расчёт.', reply_markup=transit_mini_button())
 
 
-def relation_mini_button(kind):
+def relation_mini_button():
     if not bot_url().startswith('https://'):
         raise RuntimeError('PUBLIC_BASE_URL должен начинаться с https://')
-    path='synastry' if kind=='synastry' else 'synastry-transits'
-    text='Открыть синастрию 💞' if kind=='synastry' else 'Открыть транзиты синастрии 🔭'
-    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=text,web_app=WebAppInfo(url=f'{bot_url()}/{path}?v={RELATION_MINIAPP_VERSION}'))]])
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
+        text='Открыть синастрию 💞',
+        web_app=WebAppInfo(url=f'{bot_url()}/synastry?v={RELATION_MINIAPP_VERSION}')
+    )]])
 
 async def synastry_start(m, uid=None):
     uid=int(uid or m.from_user.id)
@@ -141,16 +143,7 @@ async def synastry_start(m, uid=None):
         await answer_user(m,'У вас осталось 0 запросов.')
         await subscription(m)
         return
-    await answer_user(m,'Сравним две натальные карты и посмотрим, как люди взаимодействуют друг с другом 💞\n\nВведи данные рождения обоих людей.',reply_markup=relation_mini_button('synastry'))
-
-async def synastry_transits_start(m, uid=None):
-    uid=int(uid or m.from_user.id)
-    u=db.get(uid)
-    if not u or int(u['requests'])+int(u['paid_requests'])<=0:
-        await answer_user(m,'У вас осталось 0 запросов.')
-        await subscription(m)
-        return
-    await answer_user(m,'Посмотрим, какой период сейчас переживают ваши отношения и какие темы активируются на выбранную дату 🔭\n\nВведи данные рождения обоих людей и дату прогноза.',reply_markup=relation_mini_button('synastry_transits'))
+    await answer_user(m,'Сравним две натальные карты и посмотрим, как люди взаимодействуют друг с другом 💞\n\nВведи данные рождения обоих людей.',reply_markup=relation_mini_button())
 
 async def main_menu(m):
     u=db.get(m.from_user.id); left=(int(u['requests']) if u else 0)+(int(u['paid_requests']) if u else 0)
@@ -172,7 +165,7 @@ async def day_start(m):
         await subscription(m)
         return
     db.set_pending(m.from_user.id,'day','free','Карта дня')
-    await answer_user(m, 'Давай посмотрим, что ждет тебя сегодня❤️ Ты можешь сам вытянуть карту из колоды или довериться судьбе🌙',reply_markup=mini_buttons('day','free'))
+    await answer_user(m, 'Начинаем гадание, переходим к карте дня. 🧘🏼',reply_markup=mini_buttons('day','free'))
 
 async def deck_start(m,deck):
     mode='premium' if premium_access(m.from_user.id) else 'free'
@@ -216,34 +209,6 @@ async def transits_cmd(m): await transit_start(m)
 @router.message(Command('synastry'))
 async def synastry_cmd(m): await synastry_start(m)
 
-@router.message(Command('synastry_transits'))
-async def synastry_transits_cmd(m): await synastry_transits_start(m)
-
-@router.callback_query(F.data.startswith('deck:'))
-async def deck_cb(c):
-    await c.answer()
-    uid=c.from_user.id
-    deck=c.data.split(':',1)[1]
-    mode='premium' if premium_access(uid) else 'free'
-    db.set_pending(uid,deck,mode,'')
-    await c.message.answer(
-        f'Давай погадаем на {DECK_NAMES[deck]}\n\n'
-        'Сформулируй свой вопрос и напиши его полностью ❤️\n\n'
-        'Например: Что ждет меня в следующем месяце?'
-    )
-
-@router.callback_query(F.data=='day')
-async def day_cb(c):
-    await c.answer()
-    uid=c.from_user.id
-    u=db.get(uid)
-    if not u or int(u['requests'])+int(u['paid_requests'])<=0:
-        await c.message.answer('У вас осталось 0 запросов.')
-        await subscription(c.message)
-        return
-    db.set_pending(uid,'day','free','Карта дня')
-    await c.message.answer('Давай посмотрим, что ждет тебя сегодня❤️ Ты можешь сам вытянуть карту из колоды или довериться судьбе🌙',reply_markup=mini_buttons('day','free'))
-
 @router.callback_query(F.data=='transits')
 async def transits_cb(c):
     await c.answer()
@@ -254,10 +219,6 @@ async def synastry_cb(c):
     await c.answer()
     await synastry_start(c.message, c.from_user.id)
 
-@router.callback_query(F.data=='synastry_transits')
-async def synastry_transits_cb(c):
-    await c.answer()
-    await synastry_transits_start(c.message, c.from_user.id)
 
 @router.callback_query(F.data=='friend')
 async def friend_cb(c): await c.answer(); await friend_show(c.message)
@@ -297,9 +258,9 @@ async def text_message(m):
     await send_admin_question(m,deck,m.text)
     if deck=='day':
         db.set_pending(m.from_user.id,'day','free',m.text)
-        await answer_user(m, 'Давай посмотрим, что ждет тебя сегодня❤️ Ты можешь сам вытянуть карту из колоды или довериться судьбе🌙',reply_markup=mini_buttons('day','free'))
+        await answer_user(m, 'Начинаем гадание, переходим к карте дня. 🧘🏼',reply_markup=mini_buttons('day','free'))
     else:
-        await answer_user(m, 'Твой вопрос услышан. Сейчас карты покажут то, что важно увидеть именно тебе 🌙 Ты можешь сам вытянуть карты из колоды или довериться судьбе✨',reply_markup=mini_buttons(deck,mode))
+        await answer_user(m, 'Начинаем гадание, выбирай карты или доверься судьбе ✨',reply_markup=mini_buttons(deck,mode))
 
 def match_waite(q):
     norm=' '.join(q.lower().replace('ё','е').split())
@@ -558,25 +519,48 @@ async def transit_preview_api(request:Request):
     }
 
 
+
+REPORT_DIR = BASE / 'generated_reports'
+
+def _report_path(uid: int, kind: str, suffix: str = 'pdf') -> Path:
+    REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    token = secrets.token_hex(6)
+    safe_kind = re.sub(r'[^a-zA-Z0-9_-]+', '_', str(kind)).strip('_') or 'report'
+    return REPORT_DIR / f'{safe_kind}_{uid}_{token}.{suffix}'
+
+async def _send_pdf_report(uid: int, pdf_path: Path, caption: str, answer: str) -> None:
+    # Keep the full answer in the admin dialogue/history without sending it
+    # as a plain Telegram message to the client.
+    try:
+        db.log_message(int(uid), 'bot', answer, 'pdf')
+    except Exception as exc:
+        print(f'[PDF] dialogue log error uid={uid}: {type(exc).__name__}: {exc}', flush=True)
+    await bot.send_document(int(uid), FSInputFile(pdf_path), caption=caption)
+
 async def _run_transit(uid, payload, calc):
     try:
-        # The transit product uses one regular request from the user's balance.
         if not db.consume(uid,premium=True):
             await send_user_message(uid,'У вас осталось 0 запросов. Оформите подписку, чтобы продолжить 🌟')
             return
-        calc_text=calculation_for_ai(calc)
         db.event(uid,'transit_calculated',f"{calc['transit_date']}|{calc['city']}")
         print(f'[TRANSITS] START uid={uid} date={calc["transit_date"]} city={calc["city"]}',flush=True)
         await send_user_message(uid,'Загружаем Вашу натальную карту, делаем расчет...\n\nПожалуйста, подождите, Лилит готовит Ваш персональный прогноз на выбранную дату 🌌')
-        answer=await ask_transit(calc_text)
+        answer=build_transit_interpretation(calc)
+        db.event(uid,'transit_local_interpretation','deterministic')
         db.save_transit_reading(
             uid,calc['transit_date'],calc['city'],json.dumps(payload,ensure_ascii=False),
             json.dumps(calc,ensure_ascii=False),answer
         )
-        if len(answer) > 3300:
-            raise RuntimeError(f'Размер прогноза превышает 3300 символов: {len(answer)}')
-        print(f'[TRANSITS] ANSWER uid={uid} chars={len(answer)} aspects={len(calc.get("aspects", []))}',flush=True)
-        await send_user_message(uid,answer)
+        pdf_path=_report_path(uid,'transits')
+        try:
+            build_transit_pdf(pdf_path, answer, calc)
+            await _send_pdf_report(
+                uid, pdf_path,
+                'Ваш персональный прогноз по транзитам готов 🌌\n\nПолный разбор - в PDF-файле.',
+                answer
+            )
+        finally:
+            pdf_path.unlink(missing_ok=True)
         user_now=db.get(uid)
         left=(int(user_now['requests'])+int(user_now['paid_requests'])) if user_now else 0
         await send_user_message(uid,f'Ваше количество запросов: {left}\n\nЕсли хочешь посмотреть другую дату — снова открой «Транзиты» 🌌')
@@ -588,6 +572,7 @@ async def _run_transit(uid, payload, calc):
             await send_user_message(uid,'Не удалось завершить расчёт транзитов. Запрос возвращён на баланс. Попробуй ещё раз немного позже.')
         except Exception as inner:
             print(f'[TRANSITS] RECOVERY ERROR uid={uid}: {type(inner).__name__}: {inner}',flush=True)
+
 
 @app.post('/api/transits/calculate')
 async def transit_calculate_api(request:Request):
@@ -609,7 +594,7 @@ async def transit_calculate_api(request:Request):
         'birth_date':birth_date.isoformat(),'birth_time':birth_time.strftime('%H:%M') if birth_time else '',
         'time_known':time_known,'transit_date':transit_date.isoformat(),'city':city,'lat':lat,'lon':lon,'timezone':tz_name
     }
-    # Do not let the Mini App wait for CHAD. The arithmetic is fast and is done before returning.
+    # Calculation is deterministic and completes locally; the Mini App is released immediately after validation.
     task=asyncio.create_task(_run_transit(uid,payload,calc)); TRANSIT_TASKS.add(task); task.add_done_callback(TRANSIT_TASKS.discard)
     return {'ok':True,'accepted':True,'message':'Расчёт запущен'}
 
@@ -658,9 +643,6 @@ def _relation_input_json(p1,p2,transit_date=None):
 async def synastry_miniapp():
     return FileResponse(BASE/'web'/'synastry.html',headers={'Cache-Control':'no-store, no-cache, must-revalidate, max-age=0'})
 
-@app.get('/synastry-transits', response_class=HTMLResponse)
-async def synastry_transits_miniapp():
-    return FileResponse(BASE/'web'/'synastry-transits.html',headers={'Cache-Control':'no-store, no-cache, must-revalidate, max-age=0'})
 
 @app.get('/api/synastry/profile')
 async def synastry_profile_api(request:Request):
@@ -690,10 +672,20 @@ async def _run_synastry(uid,payload,calc):
             await send_user_message(uid,'У вас осталось 0 запросов. Оформите подписку, чтобы продолжить 🌟'); return
         print(f'[SYNASTRY] START uid={uid}',flush=True)
         await send_user_message(uid,'Собираем две натальные карты и рассчитываем синастрию...\n\nПожалуйста, подождите, Лилит готовит Ваш персональный разбор отношений 💞')
-        calc_text=synastry_calculation_for_ai(calc); db.event(uid,'synastry_calculated',f'{calc["name1"]}|{calc["name2"]}')
-        answer=await ask_synastry(calc_text)
+        db.event(uid,'synastry_calculated',f'{calc["name1"]}|{calc["name2"]}')
+        answer=build_synastry_interpretation(calc)
+        db.event(uid,'synastry_local_interpretation','deterministic')
         db.save_synastry_reading(uid,calc['name1'],calc['name2'],json.dumps(payload,ensure_ascii=False),json.dumps(calc,ensure_ascii=False),answer)
-        await send_user_message(uid,answer)
+        pdf_path=_report_path(uid,'synastry')
+        try:
+            build_synastry_pdf(pdf_path, answer, calc)
+            await _send_pdf_report(
+                uid, pdf_path,
+                'Ваш персональный разбор синастрии готов 💞\n\nПолный текст - в PDF-файле.',
+                answer
+            )
+        finally:
+            pdf_path.unlink(missing_ok=True)
         user_now=db.get(uid); left=(int(user_now['requests'])+int(user_now['paid_requests'])) if user_now else 0
         await send_user_message(uid,f'Ваше количество запросов: {left}\n\nЕсли хочешь посмотреть другую пару — снова открой «Синастрия» 💞')
         print(f'[SYNASTRY] DONE uid={uid}',flush=True)
@@ -701,6 +693,7 @@ async def _run_synastry(uid,payload,calc):
         print(f'[SYNASTRY] ERROR uid={uid}: {type(e).__name__}: {e}',flush=True)
         try: db.add(uid,1); await send_user_message(uid,'Не удалось завершить синастрию. Запрос возвращён на баланс. Попробуй ещё раз немного позже.')
         except Exception as inner: print(f'[SYNASTRY] RECOVERY ERROR uid={uid}: {type(inner).__name__}: {inner}',flush=True)
+
 
 @app.post('/api/synastry/calculate')
 async def synastry_calculate_api(request:Request):
@@ -712,58 +705,6 @@ async def synastry_calculate_api(request:Request):
     db.save_synastry_profile(uid,p1['name'],p1,p2['name'],p2); payload=_relation_input_json(p1,p2)
     task=asyncio.create_task(_run_synastry(uid,payload,calc)); RELATION_TASKS.add(task); task.add_done_callback(RELATION_TASKS.discard)
     return {'ok':True,'accepted':True,'message':'Синастрия запущена'}
-
-@app.get('/api/synastry-transits/profile')
-async def synastry_transits_profile_api(request:Request): return await synastry_profile_api(request)
-
-@app.post('/api/synastry-transits/preview')
-async def synastry_transits_preview_api(request:Request):
-    body=await request.json(); tg=validate_init_data(body.get('initData',''))
-    if not tg: raise HTTPException(403,'Недействительный Telegram initData')
-    uid=int(tg['id'])
-    if not db.get(uid): raise HTTPException(404,'Пользователь не найден')
-    p1,p2=_relation_payload_from_body(body)
-    try: transit_date=dt_date.fromisoformat(str(body.get('transit_date','')).strip())
-    except Exception as exc: raise HTTPException(400,'Некорректная дата прогноза') from exc
-    calc=calculate_synastry_transits(p1,p2,transit_date,p1['name'],p2['name'])
-    rows=[]
-    for person,key in ((1,'person1_relationship_transits'),(2,'person2_relationship_transits')):
-        for a in calc[key]: rows.append({'person':person,'transit_planet':a['transit_planet'],'aspect':a['aspect'],'natal_planet':a['natal_planet'],'orb_text':a['orb_text'],'state':a['state'],'house':a.get('house')})
-    rows.sort(key=lambda a:(a['person'],a['transit_planet'],a['natal_planet'],a['orb_text']))
-    return {'ok':True,'transit_date':calc['transit_date'],'aspects':rows}
-
-async def _run_synastry_transits(uid,payload,calc):
-    try:
-        if not db.consume(uid,premium=True):
-            await send_user_message(uid,'У вас осталось 0 запросов. Оформите подписку, чтобы продолжить 🌟'); return
-        print(f'[SYNASTRY TRANSITS] START uid={uid} date={calc["transit_date"]}',flush=True)
-        await send_user_message(uid,'Загружаем две натальные карты и транзиты, делаем расчет...\n\nПожалуйста, подождите, Лилит готовит прогноз для ваших отношений 🔭')
-        calc_text=synastry_transits_calculation_for_ai(calc); db.event(uid,'synastry_transits_calculated',f'{calc["transit_date"]}|{calc["name1"]}|{calc["name2"]}')
-        answer=await ask_synastry_transits(calc_text)
-        db.save_synastry_transit_reading(uid,calc['name1'],calc['name2'],calc['transit_date'],json.dumps(payload,ensure_ascii=False),json.dumps(calc,ensure_ascii=False),answer)
-        await send_user_message(uid,answer)
-        user_now=db.get(uid); left=(int(user_now['requests'])+int(user_now['paid_requests'])) if user_now else 0
-        await send_user_message(uid,f'Ваше количество запросов: {left}\n\nЕсли хочешь посмотреть другую дату — снова открой «Транзиты синастрии» 🔭')
-        print(f'[SYNASTRY TRANSITS] DONE uid={uid} date={calc["transit_date"]}',flush=True)
-    except Exception as e:
-        print(f'[SYNASTRY TRANSITS] ERROR uid={uid}: {type(e).__name__}: {e}',flush=True)
-        try: db.add(uid,1); await send_user_message(uid,'Не удалось завершить транзиты синастрии. Запрос возвращён на баланс. Попробуй ещё раз немного позже.')
-        except Exception as inner: print(f'[SYNASTRY TRANSITS] RECOVERY ERROR uid={uid}: {type(inner).__name__}: {inner}',flush=True)
-
-@app.post('/api/synastry-transits/calculate')
-async def synastry_transits_calculate_api(request:Request):
-    body=await request.json(); tg=validate_init_data(body.get('initData',''))
-    if not tg: raise HTTPException(403,'Недействительный Telegram initData')
-    uid=int(tg['id'])
-    if not db.get(uid): raise HTTPException(404,'Пользователь не найден')
-    p1,p2=_relation_payload_from_body(body)
-    try: transit_date=dt_date.fromisoformat(str(body.get('transit_date','')).strip())
-    except Exception as exc: raise HTTPException(400,'Некорректная дата прогноза') from exc
-    if not 1900 <= transit_date.year <= 2200: raise HTTPException(400,'Дата прогноза должна быть в диапазоне 1900–2200')
-    calc=calculate_synastry_transits(p1,p2,transit_date,p1['name'],p2['name'])
-    db.save_synastry_profile(uid,p1['name'],p1,p2['name'],p2); payload=_relation_input_json(p1,p2,transit_date)
-    task=asyncio.create_task(_run_synastry_transits(uid,payload,calc)); RELATION_TASKS.add(task); task.add_done_callback(RELATION_TASKS.discard)
-    return {'ok':True,'accepted':True,'message':'Транзиты синастрии запущены'}
 
 @app.get('/api/miniapp/config')
 async def mini_config(deck:str='waite'):
@@ -1044,7 +985,6 @@ async def admin_user(request:Request, uid:int):
     events=db.user_events(uid)
     transit_readings=db.user_transit_readings(uid)
     synastry_readings=db.user_synastry_readings(uid)
-    synastry_transit_readings=db.user_synastry_transit_readings(uid)
     total=int(u['requests'])+int(u['paid_requests'])
     name=html.escape(u['name'] or str(uid))
     username='@'+html.escape(u['username']) if u['username'] else '—'
@@ -1084,11 +1024,6 @@ async def admin_user(request:Request, uid:int):
         syn_rows.append(f'<div class="reading"><div class="meta"><b>Синастрия</b> · {n1} + {n2} · {dt}</div><div class="answer">{ans}</div></div>')
     syn_html=''.join(syn_rows) if syn_rows else '<p class="muted">Синастрий пока нет.</p>'
 
-    st_rows=[]
-    for sr in synastry_transit_readings:
-        dt=html.escape((sr['created_at'] or '')[:19].replace('T',' ')); td=html.escape(sr['transit_date'] or ''); n1=html.escape(sr['name1'] or 'Человек 1'); n2=html.escape(sr['name2'] or 'Человек 2'); ans=html.escape(sr['answer'] or '')
-        st_rows.append(f'<div class="reading"><div class="meta"><b>Транзиты синастрии</b> · {td} · {n1} + {n2} · {dt}</div><div class="answer">{ans}</div></div>')
-    st_html=''.join(st_rows) if st_rows else '<p class="muted">Транзитов синастрии пока нет.</p>'
 
     pay_rows=[]
     for p in payments:
@@ -1110,7 +1045,6 @@ async def admin_user(request:Request, uid:int):
 <section><h2>🔮 История раскладов</h2><p class="muted">История раскладов сохраняется отдельно и включает записи, сделанные до включения полного журнала сообщений.</p>{readings_html}</section>
 <section><h2>🌌 Транзиты</h2>{transit_html}</section>
 <section><h2>💞 Синастрия</h2>{syn_html}</section>
-<section><h2>🔭 Транзиты синастрии</h2>{st_html}</section>
 <section><h2>💳 Платежи</h2><table><tr><th>Дата</th><th>Сумма</th><th>Запросов</th><th>Статус</th></tr>{payments_html}</table></section>
 <section><h2>⚙️ События</h2><table><tr><th>Дата</th><th>Событие</th><th>Данные</th></tr>{events_html}</table></section>
 </div></body></html>'''
