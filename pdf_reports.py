@@ -138,7 +138,7 @@ def _build_report(path: str|Path, title: str, subtitle: str, meta_lines: Iterabl
         ('LEFTPADDING',(0,0),(-1,-1),5*mm),('RIGHTPADDING',(0,0),(-1,-1),5*mm),('TOPPADDING',(0,0),(-1,-1),2.3*mm),('BOTTOMPADDING',(0,0),(-1,-1),2.3*mm),
     ]))
     story += [tbl, Spacer(1,5*mm)]
-    story.append(Paragraph('В отчёте сохранены расчётные данные, все найденные основные аспекты и конкретные интерпретации по ним. Текст построен локально, без генерации ИИ.', st['small']))
+    story.append(Paragraph('Основной текст собран в цельные тематические блоки простым языком и построен локально по расчётным данным, без генерации ИИ. Полные технические аспекты и положения планет оставлены отдельно для проверки.', st['small']))
     for title_sec, rows in sections:
         story.extend(_section_story(title_sec, rows, st))
     doc.build(story)
