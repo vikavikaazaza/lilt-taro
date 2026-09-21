@@ -70,31 +70,11 @@ def premium_access(uid):
     return bool(u and (int(u['paid_requests']) > 0 or has_manual_subscription(uid)))
 
 def consume_request(uid, premium=False):
-    # Universal request consumption: use paid requests first when requested,
-    # then fall back to the regular/free request balance. This is used by
-    # tarot, transits, synastry, and synastry-transits so the same total balance
-    # is respected everywhere.
-    return bool(db.consume(uid, premium=bool(premium)))
-
-
-def consume_any_request(uid):
-    # Relationship calculations cost one request from the user's total balance.
-    # We do the atomic UPDATE here so this remains correct even if an older
-    # db.py is still present on the server.
-    with db.conn() as c:
-        cur=c.execute(
-            'UPDATE users SET paid_requests=paid_requests-1 '
-            'WHERE id=? AND paid_requests>0',
-            (int(uid),)
-        )
-        if cur.rowcount:
-            return True
-        cur=c.execute(
-            'UPDATE users SET requests=requests-1 '
-            'WHERE id=? AND requests>0',
-            (int(uid),)
-        )
-        return bool(cur.rowcount)
+    # For a manually granted subscription, free/referral requests can also be
+    # used for 9-card readings. Paid requests are still consumed first.
+    if premium:
+        return bool(db.consume(uid, premium=True))
+    return bool(db.consume(uid, premium=False))
 
 WAITE=[
 'Шут','Маг','Верховная Жрица','Императрица','Император','Иерофант','Влюблённые','Колесница','Сила','Отшельник','Колесо Фортуны','Справедливость','Повешенный','Смерть','Умеренность','Дьявол','Башня','Звезда','Луна','Солнце','Суд','Мир',
@@ -143,7 +123,8 @@ def transit_mini_button():
     url=f'{bot_url()}/transits?v={TRANSIT_MINIAPP_VERSION}'
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='Открыть расчёт транзитов 🌌',web_app=WebAppInfo(url=url))]])
 
-async def transit_start(m):
+async def transit_start(m, uid=None):
+    uid=int(uid or m.from_user.id)
     await answer_user(m, 'Посмотрим, какие темы и влияния могут быть активны для тебя в выбранную дату 🌌\n\nВведи данные рождения и дату, на которую хочешь сделать расчёт.', reply_markup=transit_mini_button())
 
 
@@ -154,16 +135,18 @@ def relation_mini_button(kind):
     text='Открыть синастрию 💞' if kind=='synastry' else 'Открыть транзиты синастрии 🔭'
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=text,web_app=WebAppInfo(url=f'{bot_url()}/{path}?v={RELATION_MINIAPP_VERSION}'))]])
 
-async def synastry_start(m):
-    u=db.get(m.from_user.id)
+async def synastry_start(m, uid=None):
+    uid=int(uid or m.from_user.id)
+    u=db.get(uid)
     if not u or int(u['requests'])+int(u['paid_requests'])<=0:
         await answer_user(m,'У вас осталось 0 запросов.')
         await subscription(m)
         return
     await answer_user(m,'Сравним две натальные карты и посмотрим, как люди взаимодействуют друг с другом 💞\n\nВведи данные рождения обоих людей.',reply_markup=relation_mini_button('synastry'))
 
-async def synastry_transits_start(m):
-    u=db.get(m.from_user.id)
+async def synastry_transits_start(m, uid=None):
+    uid=int(uid or m.from_user.id)
+    u=db.get(uid)
     if not u or int(u['requests'])+int(u['paid_requests'])<=0:
         await answer_user(m,'У вас осталось 0 запросов.')
         await subscription(m)
@@ -265,17 +248,17 @@ async def day_cb(c):
 @router.callback_query(F.data=='transits')
 async def transits_cb(c):
     await c.answer()
-    await transit_start(c.message)
+    await transit_start(c.message, c.from_user.id)
 
 @router.callback_query(F.data=='synastry')
 async def synastry_cb(c):
     await c.answer()
-    await synastry_start(c.message)
+    await synastry_start(c.message, c.from_user.id)
 
 @router.callback_query(F.data=='synastry_transits')
 async def synastry_transits_cb(c):
     await c.answer()
-    await synastry_transits_start(c.message)
+    await synastry_transits_start(c.message, c.from_user.id)
 
 @router.callback_query(F.data=='friend')
 async def friend_cb(c): await c.answer(); await friend_show(c.message)
@@ -702,9 +685,7 @@ async def synastry_preview_api(request:Request):
 
 async def _run_synastry(uid,payload,calc):
     try:
-        u0=db.get(uid)
-        print(f'[BALANCE] SYNASTRY before uid={uid} requests={int(u0["requests"]) if u0 else 0} paid_requests={int(u0["paid_requests"]) if u0 else 0}', flush=True)
-        if not consume_any_request(uid):
+        if not db.consume(uid,premium=True):
             await send_user_message(uid,'У вас осталось 0 запросов. Оформите подписку, чтобы продолжить 🌟'); return
         print(f'[SYNASTRY] START uid={uid}',flush=True)
         await send_user_message(uid,'Собираем две натальные карты и рассчитываем синастрию...\n\nПожалуйста, подождите, Лилит готовит Ваш персональный разбор отношений 💞')
@@ -752,9 +733,7 @@ async def synastry_transits_preview_api(request:Request):
 
 async def _run_synastry_transits(uid,payload,calc):
     try:
-        u0=db.get(uid)
-        print(f'[BALANCE] SYNASTRY_TRANSITS before uid={uid} requests={int(u0["requests"]) if u0 else 0} paid_requests={int(u0["paid_requests"]) if u0 else 0}', flush=True)
-        if not consume_any_request(uid):
+        if not db.consume(uid,premium=True):
             await send_user_message(uid,'У вас осталось 0 запросов. Оформите подписку, чтобы продолжить 🌟'); return
         print(f'[SYNASTRY TRANSITS] START uid={uid} date={calc["transit_date"]}',flush=True)
         await send_user_message(uid,'Загружаем две натальные карты и транзиты, делаем расчет...\n\nПожалуйста, подождите, Лилит готовит прогноз для ваших отношений 🔭')
