@@ -87,13 +87,11 @@ DECK_NAMES={'waite':'Таро Уэйта','manara':'Таро Манара','day'
 
 def menu():
     return InlineKeyboardMarkup(inline_keyboard=[
-      [InlineKeyboardButton(text='Таро Уэйта 🔮',callback_data='deck:waite'),InlineKeyboardButton(text='Таро Манара 🍓',callback_data='deck:manara')],
-      [InlineKeyboardButton(text='Карта дня 🧘🏼',callback_data='day')],
-      [InlineKeyboardButton(text='🌌 Транзиты',callback_data='transits')],
-      [InlineKeyboardButton(text='💞 Синастрия',callback_data='synastry')],
-      [InlineKeyboardButton(text='🔭 Транзиты синастрии',callback_data='synastry_transits')],
-      [InlineKeyboardButton(text='Реферальная программа ❤️',callback_data='friend')],
-      [InlineKeyboardButton(text='Оформить подписку 🌟',callback_data='pay')]])
+      [InlineKeyboardButton(text='Таро Уэйта',callback_data='deck:waite'),InlineKeyboardButton(text='Таро Манара',callback_data='deck:manara')],
+      [InlineKeyboardButton(text='Карта дня',callback_data='day'),InlineKeyboardButton(text='Синастрия',callback_data='synastry')],
+      [InlineKeyboardButton(text='🌌 Транзиты',callback_data='transits'),InlineKeyboardButton(text='Транзиты синастрии',callback_data='synastry_transits')],
+      [InlineKeyboardButton(text='Реферальная программа',callback_data='friend')],
+      [InlineKeyboardButton(text='Оформить подписку',callback_data='pay')]])
 
 def pay_menu():
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='3 вопроса — 99 рублей',callback_data='pack:3')],[InlineKeyboardButton(text='5 вопросов — 159 рублей',callback_data='pack:5')],[InlineKeyboardButton(text='10 вопросов — 329 рублей',callback_data='pack:10')]])
@@ -173,7 +171,7 @@ async def day_start(m):
         await subscription(m)
         return
     db.set_pending(m.from_user.id,'day','free','Карта дня')
-    await answer_user(m, 'Начинаем гадание, переходим к карте дня. 🧘🏼',reply_markup=mini_buttons('day','free'))
+    await answer_user(m, 'Давай посмотрим, что ждет тебя сегодня❤️ Ты можешь сам вытянуть карту из колоды или довериться судьбе🌙',reply_markup=mini_buttons('day','free'))
 
 async def deck_start(m,deck):
     mode='premium' if premium_access(m.from_user.id) else 'free'
@@ -243,7 +241,7 @@ async def day_cb(c):
         await subscription(c.message)
         return
     db.set_pending(uid,'day','free','Карта дня')
-    await c.message.answer('Начинаем гадание, переходим к карте дня. 🧘🏼',reply_markup=mini_buttons('day','free'))
+    await c.message.answer('Давай посмотрим, что ждет тебя сегодня❤️ Ты можешь сам вытянуть карту из колоды или довериться судьбе🌙',reply_markup=mini_buttons('day','free'))
 
 @router.callback_query(F.data=='transits')
 async def transits_cb(c):
@@ -298,9 +296,9 @@ async def text_message(m):
     await send_admin_question(m,deck,m.text)
     if deck=='day':
         db.set_pending(m.from_user.id,'day','free',m.text)
-        await answer_user(m, 'Начинаем гадание, переходим к карте дня. 🧘🏼',reply_markup=mini_buttons('day','free'))
+        await answer_user(m, 'Давай посмотрим, что ждет тебя сегодня❤️ Ты можешь сам вытянуть карту из колоды или довериться судьбе🌙',reply_markup=mini_buttons('day','free'))
     else:
-        await answer_user(m, 'Начинаем гадание, выбирай карты или доверься судьбе ✨',reply_markup=mini_buttons(deck,mode))
+        await answer_user(m, 'Твой вопрос услышан. Сейчас карты покажут то, что важно увидеть именно тебе 🌙 Ты можешь сам вытянуть карты из колоды или довериться судьбе✨',reply_markup=mini_buttons(deck,mode))
 
 def match_waite(q):
     norm=' '.join(q.lower().replace('ё','е').split())
