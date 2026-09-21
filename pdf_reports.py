@@ -243,8 +243,8 @@ def _build_pdf(path: str | Path, title: str, subtitle: str, meta_lines: Iterable
         "ReportSubtitle",
         parent=styles["Normal"],
         fontName=_REGULAR,
-        fontSize=11,
-        leading=15,
+        fontSize=10,
+        leading=14,
         textColor=HexColor("#D7CBE8"),
         alignment=TA_CENTER,
         spaceAfter=8 * mm,
@@ -253,8 +253,8 @@ def _build_pdf(path: str | Path, title: str, subtitle: str, meta_lines: Iterable
         "Meta",
         parent=styles["Normal"],
         fontName=_REGULAR,
-        fontSize=11,
-        leading=15,
+        fontSize=9.5,
+        leading=14,
         textColor=HexColor("#3A3149"),
         alignment=TA_LEFT,
     )
@@ -262,8 +262,8 @@ def _build_pdf(path: str | Path, title: str, subtitle: str, meta_lines: Iterable
         "Section",
         parent=styles["Heading2"],
         fontName=_BOLD,
-        fontSize=17,
-        leading=22,
+        fontSize=13.2,
+        leading=17,
         textColor=HexColor("#E1C77B"),
         spaceBefore=2.5 * mm,
         spaceAfter=2 * mm,
@@ -272,8 +272,8 @@ def _build_pdf(path: str | Path, title: str, subtitle: str, meta_lines: Iterable
         "Body",
         parent=styles["BodyText"],
         fontName=_REGULAR,
-        fontSize=15,
-        leading=21,
+        fontSize=10.3,
+        leading=15.2,
         textColor=HexColor("#F0EAF6"),
         spaceAfter=2.2 * mm,
     )
@@ -281,8 +281,8 @@ def _build_pdf(path: str | Path, title: str, subtitle: str, meta_lines: Iterable
         "Note",
         parent=styles["Normal"],
         fontName=_REGULAR,
-        fontSize=9,
-        leading=12,
+        fontSize=8.2,
+        leading=11,
         textColor=HexColor("#C8BED1"),
     )
 
@@ -309,6 +309,12 @@ def _build_pdf(path: str | Path, title: str, subtitle: str, meta_lines: Iterable
             spaceAfter=8 * mm,
         ),
     ))
+    story.append(Paragraph(
+        "Персональный разбор подготовлен на основании рассчитанных астрологических показателей. "
+        "В PDF вынесен основной интерпретационный текст, чтобы его было удобно сохранить или отправить другому человеку.",
+        note_style,
+    ))
+    story.append(Spacer(1, 8 * mm))
 
     sections = _split_sections(answer)
     for idx, (section_title, body) in enumerate(sections):
@@ -356,3 +362,18 @@ def build_transit_pdf(path: str | Path, answer: str, calc: dict) -> str:
         f"Аспектов на выбранную дату: {len(calc.get('aspects', []))}",
     ]
     return _build_pdf(path, "Транзиты", "ЛИЛИТ · персональный прогноз на выбранную дату", meta, answer)
+
+
+def build_annual_pdf(path: str | Path, answer: str, calc: dict) -> str:
+    year = str(calc.get('year') or '')
+    name = str(calc.get('name') or 'Клиент')
+    birth_date = str(calc.get('birth_date') or '')
+    birth_time = str(calc.get('birth_time') or '')
+    city = str(calc.get('city') or '')
+    meta = [
+        f"{name} · прогноз на {year} год",
+        f"Дата рождения: {birth_date} · {birth_time or 'время неизвестно'}",
+        f"Город рождения: {city}",
+        f"Месячных расчётных точек: {len(calc.get('months', []))} · сильных периодов: {len(calc.get('strongest_periods', []))}",
+    ]
+    return _build_pdf(path, f"Прогноз на {year} год", "ЛИЛИТ · персональный годовой разбор", meta, answer)
