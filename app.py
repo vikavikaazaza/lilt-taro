@@ -15,18 +15,15 @@ import uvicorn
 import config, db
 from chad import ask
 from synastry import calculate_synastry
-from pdf_reports import build_annual_pdf, build_synastry_pdf
+from pdf_reports import build_synastry_pdf
 from astro_reports import build_synastry_interpretation
-from annual_forecast import calculate_annual_forecast, build_annual_forecast
 
 BASE=Path(__file__).resolve().parent
 router=Router()
 bot: Bot
 BROADCAST_TASKS=set()
 READING_TASKS=set()
-YEAR_TASKS=set()
 RELATION_TASKS=set()
-YEAR_MINIAPP_VERSION='1'
 RELATION_MINIAPP_VERSION='1'
 NOMINATIM_LOCK=asyncio.Lock()
 NOMINATIM_LAST=0.0
@@ -90,7 +87,6 @@ def menu():
     return InlineKeyboardMarkup(inline_keyboard=[
       [InlineKeyboardButton(text='Таро Уэйта 🔮',callback_data='deck:waite'),InlineKeyboardButton(text='Таро Манара 🍓',callback_data='deck:manara')],
       [InlineKeyboardButton(text='Карта дня 🧘🏼',callback_data='day')],
-      [InlineKeyboardButton(text='📅 Прогноз на год',callback_data='annual')],
       [InlineKeyboardButton(text='💞 Синастрия',callback_data='synastry')],
       [InlineKeyboardButton(text='Реферальная программа ❤️',callback_data='friend')],
       [InlineKeyboardButton(text='Оформить подписку 🌟',callback_data='pay')]])
@@ -116,17 +112,6 @@ def mini_buttons(deck,mode):
         [InlineKeyboardButton(text=manual_text,web_app=WebAppInfo(url=mini_url(deck,mode,'manual')))],
         [InlineKeyboardButton(text='Довериться судьбе ✨',web_app=WebAppInfo(url=mini_url(deck,mode,'fate')))]
     ])
-
-def annual_mini_button():
-    if not bot_url().startswith('https://'):
-        raise RuntimeError('PUBLIC_BASE_URL должен начинаться с https://')
-    url=f'{bot_url()}/year?v={YEAR_MINIAPP_VERSION}'
-    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='Открыть прогноз на год 📅',web_app=WebAppInfo(url=url))]])
-
-async def annual_start(m, uid=None):
-    uid=int(uid or m.from_user.id)
-    await answer_user(m, 'Составим персональный прогноз на год по твоей натальной карте 📅\n\nВыбери год и укажи данные рождения. В PDF будут главные темы года, сильные периоды и календарь событий по месяцам.', reply_markup=annual_mini_button())
-
 
 def relation_mini_button():
     if not bot_url().startswith('https://'):
@@ -199,8 +184,6 @@ async def magic(m): await deck_start(m,'waite')
 async def manara(m): await deck_start(m,'manara')
 @router.message(Command('day'))
 async def day_cmd(m): await day_start(m)
-@router.message(Command('year'))
-async def year_cmd(m): await annual_start(m)
 
 @router.message(Command('synastry'))
 async def synastry_cmd(m): await synastry_start(m)
@@ -234,11 +217,6 @@ async def day_cb(c):
         'Начинаем гадание, переходим к карте дня. 🧘🏼',
         reply_markup=mini_buttons('day','free')
     )
-
-@router.callback_query(F.data=='annual')
-async def annual_cb(c):
-    await c.answer()
-    await annual_start(c.message, c.from_user.id)
 
 @router.callback_query(F.data=='synastry')
 async def synastry_cb(c):
@@ -406,141 +384,6 @@ async def miniapp():
         BASE/'web'/'index.html',
         headers={'Cache-Control':'no-store, no-cache, must-revalidate, max-age=0'}
     )
-
-@app.get('/year',response_class=HTMLResponse)
-async def year_miniapp():
-    return FileResponse(BASE/'web'/'year.html',headers={'Cache-Control':'no-store, no-cache, must-revalidate, max-age=0'})
-
-async def _geocode_city(query: str, limit: int = 5):
-    global NOMINATIM_LAST
-    q=str(query or '').strip()
-    if len(q) < 2:
-        return []
-    async with NOMINATIM_LOCK:
-        loop=asyncio.get_running_loop()
-        wait=1.05-(loop.time()-NOMINATIM_LAST)
-        if wait>0:
-            await asyncio.sleep(wait)
-        params={'q':q,'format':'jsonv2','limit':str(max(1,min(limit,5))),'addressdetails':'1','accept-language':'ru'}
-        headers={'User-Agent':'LilitTaroBot/1.0 (annual forecast mini app)'}
-        timeout=aiohttp.ClientTimeout(total=12,connect=8,sock_connect=8,sock_read=10)
-        try:
-            async with aiohttp.ClientSession(timeout=timeout,headers=headers) as session:
-                async with session.get('https://nominatim.openstreetmap.org/search',params=params) as resp:
-                    NOMINATIM_LAST=loop.time()
-                    if resp.status>=400:
-                        raise RuntimeError(f'geocoder HTTP {resp.status}')
-                    data=await resp.json(content_type=None)
-        except Exception as exc:
-            print(f'[GEOCODE] error: {type(exc).__name__}: {exc}',flush=True)
-            return []
-    out=[]
-    for item in data if isinstance(data,list) else []:
-        try:
-            out.append({
-                'display_name':str(item.get('display_name') or q),
-                'lat':float(item['lat']),
-                'lon':float(item['lon']),
-            })
-        except Exception:
-            continue
-    return out
-
-@app.get('/api/year/cities')
-async def year_cities(q:str=''):
-    return {'cities':await _geocode_city(q,5)}
-
-def _validate_year_payload(body):
-    try: birth_date=dt_date.fromisoformat(str(body.get('birth_date','')).strip())
-    except Exception as exc: raise HTTPException(400,'Некорректная дата рождения') from exc
-    try: year=int(body.get('year'))
-    except Exception as exc: raise HTTPException(400,'Некорректный год прогноза') from exc
-    if not 1900 <= birth_date.year <= 2200 or not 1900 <= year <= 2200:
-        raise HTTPException(400,'Дата или год вне допустимого диапазона')
-    raw_time=str(body.get('birth_time') or '').strip(); time_known=bool(body.get('time_known',bool(raw_time)))
-    birth_time=None
-    if time_known:
-        try: birth_time=dt_time.fromisoformat(raw_time)
-        except Exception as exc: raise HTTPException(400,'Некорректное время рождения') from exc
-    city=str(body.get('city') or '').strip()
-    if len(city)<2: raise HTTPException(400,'Укажите город рождения')
-    try: lat=float(body.get('lat')); lon=float(body.get('lon'))
-    except Exception as exc: raise HTTPException(400,'Выберите город из найденных вариантов') from exc
-    if not (-90<=lat<=90 and -180<=lon<=180): raise HTTPException(400,'Некорректные координаты города')
-    try:
-        from timezonefinder import timezone_at
-        tz_name=timezone_at(lng=lon,lat=lat)
-    except Exception as exc: raise HTTPException(500,'Не удалось определить часовой пояс города') from exc
-    if not tz_name: raise HTTPException(400,'Не удалось определить часовой пояс города')
-    try: ZoneInfo(tz_name)
-    except ZoneInfoNotFoundError as exc: raise HTTPException(400,'Неизвестный часовой пояс города') from exc
-    name=str(body.get('name') or '').strip()
-    return birth_date,birth_time,time_known,year,name,city,lat,lon,tz_name
-
-@app.get('/api/year/profile')
-async def year_profile_api(request:Request):
-    tg=validate_init_data(request.query_params.get('initData',''))
-    if not tg: raise HTTPException(403,'Недействительный Telegram initData')
-    row=db.transit_profile(int(tg['id']))
-    if not row: return {'profile':None}
-    return {'profile':{'name':(db.get(int(tg['id'])) or {}).get('name') or '', 'birth_date':row['birth_date'],'birth_time':row['birth_time'] or '', 'time_known':bool(row['time_known']), 'city':row['city'],'lat':float(row['latitude']),'lon':float(row['longitude']),'timezone':row['timezone']}}
-
-REPORT_DIR = BASE / 'generated_reports'
-
-def _report_path(uid: int, kind: str, suffix: str = 'pdf') -> Path:
-    REPORT_DIR.mkdir(parents=True, exist_ok=True)
-    token = secrets.token_hex(6)
-    safe_kind = re.sub(r'[^a-zA-Z0-9_-]+', '_', str(kind)).strip('_') or 'report'
-    return REPORT_DIR / f'{safe_kind}_{uid}_{token}.{suffix}'
-
-async def _send_pdf_report(uid: int, pdf_path: Path, caption: str, answer: str) -> None:
-    # Keep the full answer in the admin dialogue/history without sending it
-    # as a plain Telegram message to the client.
-    try:
-        db.log_message(int(uid), 'bot', answer, 'pdf')
-    except Exception as exc:
-        print(f'[PDF] dialogue log error uid={uid}: {type(exc).__name__}: {exc}', flush=True)
-    await bot.send_document(int(uid), FSInputFile(pdf_path), caption=caption)
-
-async def _run_annual(uid, calc):
-    try:
-        year=calc['year']
-        db.event(uid,'annual_forecast_started',str(year))
-        print(f'[ANNUAL] START uid={uid} year={year}',flush=True)
-        await send_user_message(uid,'Собираем натальную карту и годовую динамику...\n\nПожалуйста, подождите, Лилит готовит Ваш персональный прогноз на год 📅')
-        answer=await build_annual_forecast(calc)
-        db.event(uid,'annual_forecast_ready',str(year))
-        pdf_path=_report_path(uid,'annual_forecast')
-        try:
-            build_annual_pdf(pdf_path,answer,calc)
-            await _send_pdf_report(uid,pdf_path,f'Ваш персональный прогноз на {year} год готов 📅\n\nПолный разбор — в PDF-файле.',answer)
-        finally:
-            pdf_path.unlink(missing_ok=True)
-        user_now=db.get(uid); left=(int(user_now['requests'])+int(user_now['paid_requests'])) if user_now else 0
-        await send_user_message(uid,f'Ваше количество запросов: {left}\n\nЕсли хочешь посмотреть прогноз на другой год — снова открой «Прогноз на год» 📅')
-        print(f'[ANNUAL] DONE uid={uid} year={year}',flush=True)
-    except Exception as e:
-        print(f'[ANNUAL] ERROR uid={uid}: {type(e).__name__}: {e}',flush=True)
-        try: await send_user_message(uid,'Не удалось завершить годовой прогноз. Попробуй ещё раз немного позже.')
-        except Exception as inner: print(f'[ANNUAL] RECOVERY ERROR uid={uid}: {type(inner).__name__}: {inner}',flush=True)
-
-@app.post('/api/year/calculate')
-async def year_calculate_api(request:Request):
-    body=await request.json(); tg=validate_init_data(body.get('initData',''))
-    if not tg: raise HTTPException(403,'Недействительный Telegram initData')
-    uid=int(tg['id'])
-    if not db.get(uid): raise HTTPException(404,'Пользователь не найден')
-    birth_date,birth_time,time_known,year,name,city,lat,lon,tz_name=_validate_year_payload(body)
-    try:
-        calc=calculate_annual_forecast(birth_date,birth_time,year,lat,lon,tz_name,city,name)
-    except ValueError as exc: raise HTTPException(400,str(exc)) from exc
-    except Exception as exc:
-        print(f'[ANNUAL] CALC ERROR uid={uid}: {type(exc).__name__}: {exc}',flush=True)
-        raise HTTPException(500,'Не удалось рассчитать годовую динамику') from exc
-    # Reuse the existing birth-profile storage so the Mini App remembers the client without a schema migration.
-    db.save_transit_profile(uid,birth_date.isoformat(),birth_time.strftime('%H:%M') if birth_time else None,time_known,city,lat,lon,tz_name)
-    task=asyncio.create_task(_run_annual(uid,calc)); YEAR_TASKS.add(task); task.add_done_callback(YEAR_TASKS.discard)
-    return {'ok':True,'accepted':True,'message':'Годовой прогноз запущен'}
 
 def _validate_relation_person(person, label):
     if not isinstance(person, dict):
@@ -1115,11 +958,6 @@ async def main():
         payment_task.cancel()
         try: await payment_task
         except asyncio.CancelledError: pass
-        for task in list(YEAR_TASKS):
-            task.cancel()
-        for task in list(YEAR_TASKS):
-            try: await task
-            except asyncio.CancelledError: pass
 
         for task in list(RELATION_TASKS):
             task.cancel()
