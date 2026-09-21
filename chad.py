@@ -2,6 +2,10 @@ import asyncio
 import aiohttp
 import config
 import re
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+from uuid import uuid4
 
 MANARA_NAMES=[
 'Дурак','Маг','Верховная Жрица','Императрица','Император','Верховный Жрец','Возлюбленные','Колесница','Справедливость','Отшельник','Зеркало','Сила','Наказание','Смерть','Умеренность','Дьявол','Башня','Звезда','Луна','Солнце','Суд','Мир',
@@ -24,6 +28,102 @@ if PROMPTS is None:
     PROMPTS=getattr(config, 'prompts', {})
 if not isinstance(PROMPTS, dict):
     PROMPTS={}
+
+
+
+CHAD_WORDS_URL = 'https://ask.chadgpt.ru/api/public/words'
+USAGE_LOG_DIR = Path(__file__).resolve().parent / 'logs'
+USAGE_LOG_FILE = USAGE_LOG_DIR / 'chad_usage.log'
+
+
+def _usage_log(line):
+    stamp=datetime.now(timezone.utc).isoformat(timespec='seconds')
+    full=f'{stamp} {line}'
+    print(full, flush=True)
+    try:
+        USAGE_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        with USAGE_LOG_FILE.open('a', encoding='utf-8') as f:
+            f.write(full + '\n')
+    except Exception as exc:
+        print(f'[CHAD USAGE] file log error: {type(exc).__name__}: {exc}', flush=True)
+
+
+async def _chad_words_balance(session):
+    """Read current CHAD word/spark balance for fallback usage accounting."""
+    try:
+        async with session.post(
+            CHAD_WORDS_URL,
+            json={'api_key': CHAD_API_KEY},
+            headers={'Content-Type': 'application/json', 'Authorization': f'Bearer {CHAD_API_KEY}'},
+        ) as response:
+            body=await response.text()
+            if response.status >= 400:
+                _usage_log(f'[CHAD USAGE] balance status={response.status}')
+                return None
+            try:
+                data=await response.json(content_type=None)
+            except Exception:
+                data={}
+            if not isinstance(data, dict) or not data.get('is_success', True):
+                return None
+            return {
+                'used_words': data.get('used_words'),
+                'total_words': data.get('total_words'),
+                'remaining_words': data.get('remaining_words'),
+                'reserved_words': data.get('reserved_words'),
+            }
+    except Exception as exc:
+        _usage_log(f'[CHAD USAGE] balance error={type(exc).__name__}: {exc}')
+        return None
+
+
+def _response_usage(data):
+    if not isinstance(data, dict):
+        return None, None, None
+    used_words = data.get('used_words_count')
+    if used_words is None:
+        used_words = data.get('used_sparks_count')
+    used_tokens = data.get('used_tokens_count')
+    remaining = data.get('remaining_words')
+    return used_words, used_tokens, remaining
+
+
+def _usage_from_balance(before, after):
+    if not before or not after:
+        return None
+    b=before.get('remaining_words')
+    a=after.get('remaining_words')
+    if isinstance(b, (int, float)) and isinstance(a, (int, float)):
+        return max(0, int(b-a))
+    return None
+
+
+async def _log_chad_request_usage(session, request_id, kind, attempt, response_data, before_balance, http_status):
+    after_balance=await _chad_words_balance(session)
+    used_words, used_tokens, response_remaining=_response_usage(response_data)
+    diff=_usage_from_balance(before_balance, after_balance)
+    if used_words is None:
+        used_words=diff
+        source='balance_diff' if diff is not None else 'unavailable'
+    else:
+        source='api_response'
+
+    if used_words is not None:
+        used_label=f'{used_words} sparks/words'
+    elif used_tokens is not None:
+        used_label=f'{used_tokens} tokens'
+    else:
+        used_label='unknown'
+
+    before_remaining=before_balance.get('remaining_words') if before_balance else None
+    after_remaining=after_balance.get('remaining_words') if after_balance else response_remaining
+    reserved=after_balance.get('reserved_words') if after_balance else None
+    _usage_log(
+        f'[CHAD USAGE] id={request_id} kind={kind} attempt={attempt} '
+        f'http={http_status} used={used_label} source={source} '
+        f'before_remaining={before_remaining} after_remaining={after_remaining} '
+        f'reserved={reserved}'
+    )
 
 
 def _card_lines(cards):
@@ -89,11 +189,13 @@ async def ask(deck, q, cards, paid=False, day=False):
         'Ответь строго в соответствии с системным промптом, но не выбирай карты самостоятельно.'
     )
 
-    print(f'[CHAD] request deck={deck} key={key} cards={names!r}', flush=True)
+    request_id=uuid4().hex[:10]
+    print(f'[CHAD] request id={request_id} deck={deck} key={key} cards={names!r}', flush=True)
     timeout=aiohttp.ClientTimeout(total=125, connect=20, sock_connect=20, sock_read=120)
 
     async with aiohttp.ClientSession(timeout=timeout) as session:
         for attempt in range(1, 3):
+            before_balance=await _chad_words_balance(session)
             payload={
                 'message': user_message if attempt == 1 else (
                     user_message + '\n\nКРИТИЧЕСКАЯ ПРОВЕРКА: в прошлой попытке карты были указаны неверно. '
@@ -112,12 +214,16 @@ async def ask(deck, q, cards, paid=False, day=False):
             ) as response:
                 text=await response.text()
                 print(f'[CHAD] response status={response.status} body_len={len(text)} attempt={attempt}', flush=True)
+                try:
+                    usage_data=await response.json(content_type=None)
+                except Exception:
+                    usage_data={}
+                await _log_chad_request_usage(
+                    session, request_id, f'{deck}/{key}', attempt, usage_data, before_balance, response.status
+                )
                 if response.status>=400:
                     raise RuntimeError(f'CHAD API HTTP {response.status}: {text[:1000]}')
-                try:
-                    data=await response.json(content_type=None)
-                except Exception:
-                    data={}
+                data=usage_data
                 if isinstance(data,dict):
                     answer=data.get('message') or data.get('answer') or data.get('response') or data.get('text')
                     if answer:
@@ -141,436 +247,3 @@ async def ask(deck, q, cards, paid=False, day=False):
                 )
 
     raise RuntimeError('CHAD API вернул трактовку с другими картами. Запрос безопасно отменён.')
-
-
-TRANSIT_SYSTEM_PROMPT = '''
-Ты — Лилит, персональный эзотерический консультант. Ты получаешь ГОТОВЫЙ астрологический расчёт транзитов к натальной карте клиента и делаешь персональный прогноз на выбранную дату.
-
-Используй ТОЛЬКО переданные расчётные данные. Не пересчитывай положения планет, аспекты, орбисы, знаки, дома или Асцендент и не добавляй показатели, которых нет в расчёте.
-
-Переводи расчёт в конкретные возможные жизненные сценарии. Не ограничивайся описанием «энергий». Когда показатели действительно поддерживают сценарий, называй конкретное проявление: разговор с руководителем, изменение обязанностей, собеседование, новая работа, завершение работы, увольнение, переезд, поездка, документы, покупка или продажа, денежный вопрос, знакомство, предложение, сближение, конфликт, расставание, возвращение человека, запуск или завершение проекта, официальное решение, смена планов и другие события. Не выбирай событие только потому, что оно есть в примерах.
-
-Учитывай фазу аспекта: сходящийся — тема набирает силу; точный — пик около выбранной даты; расходящийся — тема уже могла проявиться, сейчас идут последствия или переоценка. Ретроградность учитывай как возврат, пересмотр, повторное рассмотрение или задержку. Сроки выражай только как сегодня, ближайшие дни, недели или месяцы. Точную будущую дату не придумывай.
-
-Если есть дома, используй их для конкретизации сферы жизни. Если время рождения неизвестно, не используй дома и Асцендент и учитывай приблизительность натальной Луны.
-
-Не утверждай неизбежность событий. Формулируй как возможные сценарии, но максимально конкретно.
-
-Не используй Markdown. Никаких #, *, жирного, курсива, маркеров или многоточий для обозначения пропущенного текста. Используй обычные заголовки и нумерацию.
-
-ОБЯЗАТЕЛЬНО напиши ВСЕ 9 разделов в указанном порядке. Каждый раздел должен иметь содержательный текст и заканчиваться полноценным предложением. Не используй «…» и «...». Нельзя заканчивать раздел оборванной фразой.
-
-1. Прогноз на [дата]
-1–2 коротких законченных предложения о главном сюжете даты.
-
-2. Какие события могут произойти
-Дай 3 конкретных сценария, максимум 4. Для каждого: сначала реальное возможное событие, затем кратко какой аспект или сочетание аспектов его поддерживает и какой срок наиболее вероятен.
-
-3. Что уже формируется
-Покажи 1–2 долгих процесса и один краткий всплеск, если он есть. Обязательно укажи, что уже формируется и на каком горизонте.
-
-4. Отношения
-Опиши только конкретные возможные проявления в любви и близких отношениях, если они подтверждены расчётом.
-
-5. Работа и деньги
-Опиши только конкретные события, решения, возможности и риски, подтверждённые аспектами и домами.
-
-6. Эмоциональный фон
-Объясни, почему в выбранную дату возможны прилив сил, спад, раздражение, вдохновение, тревожность, чувствительность или желание действовать.
-
-7. Сроки и возможности
-Обязательно раздели на три части: что можно запускать сейчас; что решать после перепроверки; что не стоит форсировать. Для каждого укажи горизонт времени.
-
-8. Точки роста
-Назови 2–3 качества или урока, особенно важные сейчас, и свяжи их с текущими аспектами.
-
-9. Итог
-Дай 2–3 законченных предложения о наиболее заметном сценарии и о том, за какими признаками следить дальше.
-
-Полный список аспектов показывается клиенту отдельно в приложении. В сообщении указывай только аспекты, которые действительно объясняют конкретный прогноз.
-
-ОБЪЁМ: стремись к 2800–3100 символам. АБСОЛЮТНЫЙ МАКСИМУМ — 3300 символов. Все 9 разделов обязательны. Если места мало, сокращай формулировки внутри разделов, но НЕ удаляй разделы и НЕ обрывай предложения. Не ставь многоточия. Ответ должен заканчиваться полноценным предложением.
-'''.strip()
-
-import re
-
-EXPECTED_HEADINGS={
-    '1':'прогноз на',
-    '2':'какие события могут произойти',
-    '3':'что уже формируется',
-    '4':'отношения',
-    '5':'работа и деньги',
-    '6':'эмоциональный фон',
-    '7':'сроки и возможности',
-    '8':'точки роста',
-    '9':'итог',
-}
-HEADING_RE=re.compile(r'(?m)^(?P<num>[1-9])\.\s*(?P<title>[^\n]+?)\s*$')
-
-
-def _clean_transit_answer(text):
-    text=str(text or '').replace('```','')
-    text=re.sub(r'(?m)^\s*#{1,6}\s*','',text)
-    text=re.sub(r'\*+','',text)
-    text=re.sub(r'(?m)^\s*[-•]\s+','',text)
-    text=text.replace('…','')
-    text=re.sub(r'\.{3,}','.',text)
-    return text.strip()
-
-
-def _extract_sections(text):
-    cleaned=str(text or '').strip()
-    found=[]
-    for m in HEADING_RE.finditer(cleaned):
-        num=m.group('num')
-        title=m.group('title').strip().lower()
-        expected=EXPECTED_HEADINGS[num]
-        if not title.startswith(expected):
-            continue
-        found.append((num,m.start(),m.end(),m.group('title').strip()))
-    if len(found)!=9 or [x[0] for x in found]!=list('123456789'):
-        return {}
-    result={}
-    for i,(num,start,end,title) in enumerate(found):
-        body_start=end
-        body_end=found[i+1][1] if i<8 else len(cleaned)
-        result[num]=(title,cleaned[body_start:body_end].strip())
-    return result
-
-
-def _section_body_complete(body):
-    body=str(body or '').strip()
-    if not body or '…' in body or '...' in body:
-        return False
-    tail=body
-    while tail and tail[-1] in '»”"\'’)]}':
-        tail=tail[:-1].rstrip()
-    return bool(tail) and tail[-1] in '.!?'
-
-
-def _transit_answer_valid(text, max_chars=3300):
-    cleaned=_clean_transit_answer(text)
-    if not cleaned or len(cleaned)>max_chars:
-        return False
-    sections=_extract_sections(cleaned)
-    if set(sections)!=set('123456789'):
-        return False
-    if any(not _section_body_complete(sections[n][1]) for n in '123456789'):
-        return False
-    return True
-
-
-async def _chad_transit_request(message, system_prompt, timeout=180, attempts=2):
-    last_exc=None
-    for attempt in range(1, attempts+1):
-        try:
-            timeout_cfg=aiohttp.ClientTimeout(total=timeout,connect=20,sock_connect=20,sock_read=timeout-10)
-            async with aiohttp.ClientSession(timeout=timeout_cfg) as session:
-                payload={'message':message,'api_key':CHAD_API_KEY,'history':[{'role':'system','content':system_prompt}]}
-                async with session.post(
-                    CHAD_API_URL,
-                    json=payload,
-                    headers={'Content-Type':'application/json','Authorization':f'Bearer {CHAD_API_KEY}'},
-                ) as response:
-                    body=await response.text()
-                    print(f'[CHAD TRANSIT] response status={response.status} body_len={len(body)} attempt={attempt}',flush=True)
-                    if response.status in {502,503,504} and attempt<attempts:
-                        await asyncio.sleep(2*attempt)
-                        continue
-                    if response.status>=400:
-                        raise RuntimeError(f'CHAD API HTTP {response.status}: {body[:1000]}')
-                    try:
-                        data=await response.json(content_type=None)
-                    except Exception:
-                        data={}
-                    answer=''
-                    if isinstance(data,dict):
-                        answer=data.get('message') or data.get('answer') or data.get('response') or data.get('text') or ''
-                    if not answer and body.strip():
-                        answer=body.strip()
-                    if not str(answer).strip():
-                        raise RuntimeError('CHAD API вернул пустую интерпретацию транзитов')
-                    return str(answer).strip()
-        except (aiohttp.ClientError,asyncio.TimeoutError,TimeoutError) as exc:
-            last_exc=exc
-            print(f'[CHAD TRANSIT] network error attempt={attempt}: {type(exc).__name__}: {exc}',flush=True)
-            if attempt<attempts:
-                await asyncio.sleep(2*attempt)
-                continue
-            raise
-    if last_exc: raise last_exc
-    raise RuntimeError('CHAD API: неизвестная ошибка запроса')
-
-
-async def ask_transit(calculation_text):
-    if not CHAD_API_URL: raise RuntimeError('Не заполнен CHAD_API_URL')
-    if not CHAD_API_KEY: raise RuntimeError('Не заполнен CHAD_API_KEY')
-    user_message=(
-        'Ниже приведён точный расчёт транзитов к натальной карте клиента. '
-        'Сразу создай один законченный прогноз со всеми 9 разделами. '
-        'Сначала проверь, что каждый раздел закончен и общий текст не превышает 3300 символов. '
-        'Не пересчитывай данные, не используй Markdown, не ставь многоточия и не обрывай предложения.\n\n'+calculation_text
-    )
-    answer=_clean_transit_answer(await _chad_transit_request(user_message,TRANSIT_SYSTEM_PROMPT,timeout=180,attempts=2))
-    if _transit_answer_valid(answer,3300):
-        return answer
-
-    repair_prompt='''
-Перепиши предыдущий прогноз ПОЛНОСТЬЮ, сохранив исходные астрологические факты. Это не сокращение кусками: создай цельный новый текст.
-
-Обязательные разделы строго в таком порядке:
-1. Прогноз на [дата]
-2. Какие события могут произойти
-3. Что уже формируется
-4. Отношения
-5. Работа и деньги
-6. Эмоциональный фон
-7. Сроки и возможности
-8. Точки роста
-9. Итог
-
-В разделе 2 дай 3 конкретных события (максимум 4), и у каждого укажи поддерживающий аспект и срок. В разделах 3–9 дай законченный, содержательный текст.
-
-НЕ используй Markdown, #, *, многоточия или обрывки фраз. Каждый раздел и весь ответ должны заканчиваться полноценными предложениями.
-Объём 2800–3100 символов, абсолютный максимум 3300. Ничего не удаляй из структуры ради длины: сокращай формулировки внутри разделов.
-'''.strip()
-    repaired=_clean_transit_answer(await _chad_transit_request(
-        'Перепиши прогноз целиком по правилам редактора ниже. Не добавляй новых астрологических фактов.\n\n'+answer,
-        repair_prompt,
-        timeout=180,
-        attempts=2,
-    ))
-    if not _transit_answer_valid(repaired,3300):
-        sections=_extract_sections(repaired)
-        raise RuntimeError(
-            f'CHAD вернул неполный прогноз: длина={len(repaired)}, '
-            f'разделы={sorted(sections)}, завершённость=' +
-            str(all(_section_body_complete(sections.get(n,('', ''))[1]) for n in '123456789'))
-        )
-    return repaired
-
-
-SYNASTRY_SYSTEM_PROMPT = '''
-Ты — Лилит, персональный эзотерический консультант. Ты получаешь ГОТОВЫЙ расчёт синастрии двух натальных карт и делаешь персональный разбор их отношений.
-
-Используй ТОЛЬКО переданные расчётные данные. Не пересчитывай планеты, аспекты, орбисы, дома или углы и не добавляй показатели, которых нет в расчёте.
-
-В расчёте специально подготовлены пять ключевых блоков. Обязательно используй их в соответствующих разделах:
-1) УРОВЕНЬ СОВМЕСТИМОСТИ — понимание друг друга, общение, любовь, дружба, брак, совместные дела.
-2) ЭМОЦИОНАЛЬНЫЙ КОНТАКТ (ЛУНА — ВЕНЕРА) — чувства, симпатия, эмоциональный комфорт и потребность в тепле.
-3) ПРИТЯЖЕНИЕ И СТРАСТЬ (МАРС — СОЛНЦЕ) — физическое притяжение, воля, инициатива и энергетическая динамика.
-4) СФЕРЫ КОНФЛИКТОВ — прежде всего квадраты и оппозиции, указывающие на точки трения.
-5) ПЕРСПЕКТИВЫ СОЮЗА — прежде всего Юпитер, Сатурн, длительные связи, углы и дома, если время рождения известно.
-
-Если в каком-то из этих блоков нет аспектов, прямо скажи, что значимых аспектов по этому блоку в расчёте не найдено. Не заменяй отсутствие показателей общими астрологическими рассуждениями.
-
-Не делай расплывчатый текст о «совместимости вообще». Переводи показатели в конкретную динамику пары и возможные жизненные проявления: сильное притяжение, ревность, различие потребностей, повторяющиеся конфликты, совместные планы, финансовые споры, желание жить вместе, поддержка карьеры, пауза в отношениях, возвращение к отношениям, официальный статус, трудности с доверием, сексуальная динамика, бытовые разногласия и другие сценарии — только если они действительно поддержаны расчётом.
-
-Не утверждай неизбежность событий. Используй формулировки «может проявляться», «вероятна динамика», «может приводить», «есть вероятность».
-
-Особенно подробно разбирай Луну, Венеру, Марс, Солнце, Меркурий, Юпитер и Сатурн, но не игнорируй остальные значимые аспекты. Учитывай силу связи по орбису: более точные аспекты интерпретируй подробнее. Учитывай дома и углы, если они рассчитаны; не используй дома и углы человека, если время его рождения неизвестно.
-
-Не используй Markdown. Никаких #, *, жирного, курсива, маркеров и многоточий для обрыва текста. Используй обычные заголовки и нумерацию.
-
-ОБЯЗАТЕЛЬНО напиши все 8 разделов.
-
-1. Уровень совместимости
-Оцени, насколько партнёрам легко понимать друг друга и договариваться в любви, браке, дружбе и общих делах. Обязательно опирайся на блок УРОВЕНЬ СОВМЕСТИМОСТИ и называй конкретные аспекты. Покажи, где есть поддержка, а где возможна разница темпа, взглядов или способов общения.
-
-2. Эмоциональный контакт
-Разбери прежде всего взаимодействие Луны и Венеры из одноимённого блока: симпатия, эмоциональная безопасность, забота, комфорт, чувствительность и возможная ранимость. Называй конкретные аспекты, если они есть.
-
-3. Притяжение и страсть
-Разбери прежде всего аспекты Марс — Солнце из соответствующего блока: физическое притяжение, инициатива, воля, сексуальная энергия и возможные столкновения темпераментов. Дополнительно используй другие аспекты только если они усиливают или уточняют эту тему.
-
-4. Сферы конфликтов
-Назови 2–3 наиболее заметные точки трения. В первую очередь используй квадраты и оппозиции из блока СФЕРЫ КОНФЛИКТОВ и связывай каждую проблему с конкретным аспектом. Не превращай любой сложный аспект в неизбежный конфликт.
-
-5. Перспективы союза
-Покажи, что может поддерживать связь на дистанции времени и что может мешать ей развиваться. Используй блок ПЕРСПЕКТИВЫ СОЮЗА, а также углы и дома, если они есть. Отдельно отметь показатели серьёзности, ответственности, совместных планов и устойчивости, если они действительно присутствуют.
-
-6. Любовь, близость и совместная жизнь
-Собери в одну практическую картину чувства, доверие, ревность, сексуальную близость, быт, деньги, ответственность, переезд и общие планы — только по тем аспектам и домам, которые это поддерживают.
-
-7. Точки роста
-Назови 3 конкретных качества или навыка, которые каждому человеку полезно развивать именно в этой связи. Для каждого опирайся на конкретные показатели расчёта.
-
-8. Итог
-Дай ясный вывод о характере связи в 3–4 предложениях: что соединяет людей сильнее всего, где у пары главная сложность и какие реальные проявления отношений стоит наблюдать.
-
-Полный список всех синастрических аспектов показывается клиенту отдельно в приложении. Не трать сообщение на механическое перечисление всего списка. В тексте называй только те аспекты, на которых строится конкретный вывод.
-
-ОБЪЁМ: целевой 2600–3000 символов, абсолютный максимум 3300. Все 8 разделов обязательны. Если нужно сокращать, сокращай формулировки внутри разделов, но не удаляй разделы и не обрывай предложения.
-'''.strip()
-
-SYNASTRY_TRANSIT_SYSTEM_PROMPT = '''
-Ты — Лилит, персональный эзотерический консультант. Ты получаешь ГОТОВУЮ синастрию двух людей и ГОТОВЫЙ расчёт транзитов на выбранную дату к картам обоих людей. Сделай персональный прогноз именно для отношений этой пары на выбранную дату.
-
-Используй ТОЛЬКО переданные расчётные данные. Не пересчитывай планеты, аспекты, орбисы, дома или углы.
-
-Сначала отдели устойчивую природу связи от временного периода. Затем объясни, какие темы отношений активируются транзитами сейчас.
-
-Будь конкретной. Называй возможные события и реальные проявления: важный разговор, примирение, ссора, предложение, решение съехаться или разъехаться, поездка, оформление отношений, знакомство с семьёй, совместная покупка, финансовый спор, изменение планов, возвращение к незавершённой теме, усиление притяжения, охлаждение, пауза, решение о будущем отношений и другие сценарии — только если они действительно поддержаны расчётом.
-
-Учитывай состояние аспекта: сходящийся — тема набирает силу; точный — пик около выбранной даты; расходящийся — последствия или развязка. Ретроградность — возврат, повторное обсуждение, пересмотр, задержка или возвращение человека/темы. Сроки выражай только как сегодня, ближайшие дни, недели или месяцы.
-
-Не утверждай неизбежность событий. Не используй Markdown: никаких #, *, жирного, курсива, маркеров и многоточий для обрыва текста.
-
-ОБЯЗАТЕЛЬНО все 8 разделов:
-
-1. Прогноз отношений на [дата]
-Главный сюжет периода в 2–3 предложениях.
-
-2. Какие события могут произойти
-Дай 3–4 конкретных сценария. Для каждого: событие → какие транзиты его поддерживают → срок.
-
-3. Что уже формируется
-Покажи 1–2 долгих процесса и их связь с базовой синастрией.
-
-4. Эмоциональный фон пары
-Почему отношения могут ощущаться более тёплыми, напряжёнными, нестабильными или притягательными.
-
-5. Любовь, близость и конфликт
-Что вероятнее усиливается в чувствах и где возможна точка напряжения.
-
-6. Сроки и возможности
-Что можно обсуждать или начинать сейчас; что лучше перепроверить; что не стоит форсировать. Для каждого — горизонт времени.
-
-7. Точки роста
-3 качества или урока, которые особенно важны паре сейчас.
-
-8. Итог
-2–4 законченных предложения о главном сценарии периода.
-
-Полные списки базовых синастрических аспектов и текущих транзитных аспектов показываются отдельно в приложении. Не перечисляй их механически в сообщении.
-
-ОБЪЁМ: целевой 2600–3000 символов, абсолютный максимум 3300. Все 8 разделов обязательны. Никогда не обрывай раздел или предложение ради объёма.
-'''.strip()
-
-RELATION_SECTION_RE = re.compile(r'(?ms)^(?P<num>[1-8])\.\s*(?P<title>[^\n]+)\n(?P<body>.*?)(?=^\d+\.\s|\Z)')
-
-
-def _clean_relation_answer(text):
-    text=str(text or '').replace('```','')
-    text=re.sub(r'(?m)^\s*#{1,6}\s*','',text)
-    text=re.sub(r'\*+','',text)
-    text=re.sub(r'(?m)^\s*[-•]\s+','',text)
-    text=text.replace('…','.')
-    return text.strip()
-
-
-def _extract_relation_sections(text):
-    return {m.group('num'):(m.group('title').strip(),m.group('body').strip()) for m in RELATION_SECTION_RE.finditer(text)}
-
-
-def _relation_sentences(text):
-    return [x.strip() for x in re.split(r'(?<=[.!?])\s+',str(text).strip()) if x.strip()]
-
-
-def _fit_relation_answer(text, max_chars=3300):
-    text=_clean_relation_answer(text)
-    sections=_extract_relation_sections(text)
-    if len(sections)!=8 or any(not sections.get(n,('', ''))[1] for n in '12345678'):
-        return text
-    if len(text)<=max_chars:
-        return text
-    budgets={'1':330,'2':480,'3':480,'4':430,'5':420,'6':470,'7':350,'8':330}
-    out=[]
-    canonical={'1':'Главная динамика пары','2':'Что притягивает','3':'Где возникают конфликты','4':'Любовь и близость','5':'Быт, деньги и совместная жизнь','6':'Потенциал отношений','7':'Точки роста','8':'Итог'}
-    for n in '12345678':
-        body=re.sub(r'\s+',' ',sections[n][1])
-        out.append(f'{n}. {canonical[n]}')
-        if len(body)<=budgets[n]:
-            out.append(body)
-        else:
-            sents=_relation_sentences(body)
-            acc=[]; used=0
-            for sent in sents:
-                extra=len(sent)+(1 if acc else 0)
-                if used+extra<=budgets[n]:
-                    acc.append(sent); used+=extra
-                else:
-                    break
-            out.append(' '.join(acc) if acc else body[:max(80,budgets[n]-1)].rsplit(' ',1)[0]+'.')
-    result='\n\n'.join(out).strip()
-    if len(result)<=max_chars:
-        return result
-    # Remove whole sentences from the longest body while keeping all 8 sections.
-    blocks=result.split('\n\n')
-    while len('\n\n'.join(blocks))>max_chars:
-        body_indexes=list(range(1,len(blocks),2))
-        idx=max(body_indexes,key=lambda i:len(blocks[i]))
-        sents=_relation_sentences(blocks[idx])
-        if len(sents)>1:
-            blocks[idx]=' '.join(sents[:-1]).strip()
-        else:
-            blocks[idx]=blocks[idx][:max(60,len(blocks[idx])-20)].rsplit(' ',1)[0]+'.'
-    return '\n\n'.join(blocks).strip()
-
-
-async def _chad_relation_request(message, system_prompt, timeout=180, attempts=2):
-    last_exc=None
-    for attempt in range(1, attempts+1):
-        try:
-            timeout_cfg=aiohttp.ClientTimeout(total=timeout,connect=20,sock_connect=20,sock_read=timeout-10)
-            async with aiohttp.ClientSession(timeout=timeout_cfg) as session:
-                payload={'message':message,'api_key':CHAD_API_KEY,'history':[{'role':'system','content':system_prompt}]}
-                async with session.post(CHAD_API_URL,json=payload,headers={'Content-Type':'application/json','Authorization':f'Bearer {CHAD_API_KEY}'}) as response:
-                    body=await response.text()
-                    print(f'[CHAD RELATION] response status={response.status} body_len={len(body)} attempt={attempt}',flush=True)
-                    if response.status in {502,503,504} and attempt<attempts:
-                        await asyncio.sleep(2*attempt)
-                        continue
-                    if response.status>=400:
-                        raise RuntimeError(f'CHAD API HTTP {response.status}: {body[:1000]}')
-                    try:
-                        data=await response.json(content_type=None)
-                    except Exception:
-                        data={}
-                    answer=''
-                    if isinstance(data,dict):
-                        answer=data.get('message') or data.get('answer') or data.get('response') or data.get('text') or ''
-                    if not answer and body.strip(): answer=body.strip()
-                    if not str(answer).strip(): raise RuntimeError('CHAD API вернул пустой ответ')
-                    return str(answer).strip()
-        except (aiohttp.ClientError,asyncio.TimeoutError,TimeoutError) as exc:
-            last_exc=exc
-            print(f'[CHAD RELATION] network error attempt={attempt}: {type(exc).__name__}: {exc}',flush=True)
-            if attempt<attempts:
-                await asyncio.sleep(2*attempt)
-                continue
-            raise
-    if last_exc: raise last_exc
-    raise RuntimeError('CHAD API: неизвестная ошибка запроса')
-
-
-async def _ask_relation(calculation_text, prompt, label):
-    if not CHAD_API_URL: raise RuntimeError('Не заполнен CHAD_API_URL')
-    if not CHAD_API_KEY: raise RuntimeError('Не заполнен CHAD_API_KEY')
-    user_message=(
-        f'Ниже приведён точный расчёт для задачи «{label}». '
-        'Сразу создай один законченный ответ в требуемой структуре. '
-        'Сохрани все обязательные разделы и абсолютный максимум 3300 символов.\n\n'+calculation_text
-    )
-    answer=await _chad_relation_request(user_message,prompt,timeout=180,attempts=2)
-    answer=_clean_relation_answer(answer)
-    sections=_extract_relation_sections(answer)
-    if len(sections)!=8 or any(not sections.get(n,('', ''))[1] for n in '12345678'):
-        repair_prompt='''Верни только исправленный, законченный ответ по исходному тексту. Сохрани все 8 нумерованных разделов, конкретные выводы и факты. Никакого Markdown и никаких многоточий. Не добавляй новых астрологических данных. Максимум 3000 символов.'''.strip()
-        repaired=await _chad_relation_request('Исправь только структуру и завершённость этого ответа:\n\n'+answer,repair_prompt,timeout=120,attempts=1)
-        answer=_clean_relation_answer(repaired)
-    answer=_fit_relation_answer(answer,3300)
-    if len(answer)>3300:
-        raise RuntimeError(f'Ответ после обработки превышает 3300 символов: {len(answer)}')
-    sections=_extract_relation_sections(answer)
-    if len(sections)!=8 or any(not sections.get(n,('', ''))[1] for n in '12345678'):
-        raise RuntimeError('CHAD вернул неполный ответ: необходимы все 8 разделов')
-    return answer
-
-
-async def ask_synastry(calculation_text):
-    return await _ask_relation(calculation_text, SYNASTRY_SYSTEM_PROMPT, 'синастрия')
-
-
-async def ask_synastry_transits(calculation_text):
-    return await _ask_relation(calculation_text, SYNASTRY_TRANSIT_SYSTEM_PROMPT, 'транзиты синастрии')
