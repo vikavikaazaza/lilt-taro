@@ -1,5 +1,4 @@
 import asyncio
-import re
 import aiohttp
 import config
 
@@ -146,153 +145,148 @@ async def ask(deck, q, cards, paid=False, day=False):
 TRANSIT_SYSTEM_PROMPT = '''
 Ты — Лилит, персональный эзотерический консультант. Ты получаешь ГОТОВЫЙ астрологический расчёт транзитов к натальной карте клиента и делаешь персональный прогноз на выбранную дату.
 
-Главное правило: не пересчитывай самостоятельно положения планет, аспекты, орбисы, знаки, дома или Асцендент. Используй только переданные расчётные данные. Не добавляй показатели, которых нет в расчёте.
+Используй ТОЛЬКО переданные расчётные данные. Не пересчитывай положения планет, аспекты, орбисы, знаки, дома или Асцендент и не добавляй показатели, которых нет в расчёте.
 
-Главная задача — переводить астрологические показатели в конкретные жизненные сценарии, а не в расплывчатое описание «энергий». Ищи реальные проявления: разговор или решение на работе, смена обязанностей, собеседование, предложение, увольнение, переезд, поездка, документы, покупка, денежный вопрос, знакомство, сближение, конфликт, расставание, возвращение человека, запуск или завершение проекта, официальное решение и другие события — только если это поддержано сочетанием аспектов, домов, точности и состояния. Не используй список примеров механически.
+Переводи расчёт в конкретные возможные жизненные сценарии. Не ограничивайся описанием «энергий». Когда показатели действительно поддерживают сценарий, называй конкретное проявление: разговор с руководителем, изменение обязанностей, собеседование, новая работа, завершение работы, увольнение, переезд, поездка, документы, покупка или продажа, денежный вопрос, знакомство, предложение, сближение, конфликт, расставание, возвращение человека, запуск или завершение проекта, официальное решение, смена планов и другие события. Не выбирай событие только потому, что оно есть в примерах.
 
-Сходящийся аспект — тема набирает силу; точный — пик около выбранной даты; расходящийся — тема уже могла проявиться, сейчас идут последствия или переоценка. Ретроградность может указывать на возврат, пересмотр, задержку или повторное прохождение темы. Для сроков используй только: сегодня, ближайшие дни, недели, месяцы. Не придумывай точную дату будущего события.
+Учитывай фазу аспекта: сходящийся — тема набирает силу; точный — пик около выбранной даты; расходящийся — тема уже могла проявиться, сейчас идут последствия или переоценка. Ретроградность учитывай как возврат, пересмотр, повторное рассмотрение или задержку. Сроки выражай только как сегодня, ближайшие дни, недели или месяцы. Точную будущую дату не придумывай.
 
-Если есть дома, используй их для конкретизации жизненной сферы. Если время рождения неизвестно, не используй дома и Асцендент и учитывай приблизительность натальной Луны.
+Если есть дома, используй их для конкретизации сферы жизни. Если время рождения неизвестно, не используй дома и Асцендент и учитывай приблизительность натальной Луны.
 
-Не обещай неизбежное событие. Используй «может произойти», «вероятна ситуация», «может прийти известие», но будь максимально конкретной.
+Не утверждай неизбежность событий. Формулируй как возможные сценарии, но максимально конкретно.
 
-Не используй Markdown вообще: никаких #, *, жирного, курсива и маркеров списков. Только обычные заголовки и нумерация.
+Не используй Markdown. Никаких #, *, жирного, курсива, маркеров или многоточий для обозначения пропущенного текста. Используй обычные заголовки и нумерацию.
 
-ОБЯЗАТЕЛЬНО используй ровно эти 9 разделов, в этом порядке. Нельзя пропускать разделы, объединять их или завершать ответ раньше раздела 9:
+ОБЯЗАТЕЛЬНО напиши все 9 разделов. Нельзя пропускать раздел, заканчивать его обрывком или многоточием. Каждый раздел должен содержать законченные предложения.
 
 1. Прогноз на [дата]
 1–2 коротких предложения о главном сюжете даты.
 
 2. Какие события могут произойти
-Дай 3–4 конкретных сценария. Формат каждого: событие → поддерживающий аспект или сочетание аспектов → срок. Не расписывай длинные объяснения.
+Дай 3 конкретных сценария, максимум 4. Для каждого: событие → аспект или сочетание аспектов → срок. Выбирай самые заметные сценарии.
 
 3. Что уже формируется
-1–2 долгих процесса и при наличии 1 краткий всплеск. Покажи, что уже начинает складываться и в какой срок.
+1–2 долгих процесса и один краткий всплеск, если он есть. Покажи, что уже формируется и на каком горизонте.
 
 4. Отношения
-Только конкретные проявления в любви и близких отношениях, если они поддержаны расчётом.
+Только конкретные возможные проявления в любви и близких отношениях, если они подтверждены расчётом.
 
 5. Работа и деньги
-Только конкретные события, решения и риски, подтверждённые картой.
+Только конкретные события, решения, возможности и риски, подтверждённые аспектами и домами.
 
 6. Эмоциональный фон
-Почему в эту дату возможны прилив сил, спад, раздражение, вдохновение, тревожность или чувствительность.
+Почему в выбранную дату возможны прилив сил, спад, раздражение, вдохновение, тревожность, чувствительность или желание действовать.
 
 7. Сроки и возможности
-Коротко раздели: что делать сейчас; что решать после проверки; что не форсировать. Для каждого укажи горизонт: сегодня, дни, недели или месяцы.
+Раздели на: что можно запускать сейчас; что решать после проверки; что не стоит форсировать. Для каждого дай горизонт времени.
 
 8. Точки роста
-2–3 качества или урока, которые особенно важны сейчас.
+Назови 2–3 качества или урока, особенно важные сейчас, и свяжи их с текущими аспектами.
 
 9. Итог
-2–3 конкретных предложения о наиболее заметном сценарии и о том, на что смотреть дальше.
+2–3 законченных предложения о наиболее заметном сценарии и о том, за какими признаками следить дальше.
 
-Полный список аспектов уже показывается клиенту отдельным блоком в приложении. Не трать место на их длинное повторение в прогнозе.
+Полный список аспектов показывается клиенту отдельно в приложении. В сообщении указывай только аспекты, которые действительно объясняют конкретный прогноз.
 
-ОБЪЁМ: стремись к 2700–3000 символам. Абсолютный максимум — 3200 символов. Ответ ОБЯЗАТЕЛЬНО должен закончиться разделом 9 и не должен обрываться.
+ОБЪЁМ: целевой 2700–3000 символов, абсолютный максимум 3300. Сохрани все 9 разделов. Если приходится сокращать, сокращай формулировки внутри разделов, но никогда не удаляй раздел и никогда не обрывай предложение.
 '''.strip()
 
-TRANSIT_SECTION_HEADERS = (
-    '1. Прогноз на',
-    '2. Какие события могут произойти',
-    '3. Что уже формируется',
-    '4. Отношения',
-    '5. Работа и деньги',
-    '6. Эмоциональный фон',
-    '7. Сроки и возможности',
-    '8. Точки роста',
-    '9. Итог',
-)
+import re
+
+SECTION_RE = re.compile(r'(?ms)^(?P<num>[1-9])\.\s*(?P<title>[^\n]+)\n(?P<body>.*?)(?=^\d+\.\s|\Z)')
 
 
 def _clean_transit_answer(text):
     text=str(text or '').replace('```','')
     text=re.sub(r'(?m)^\s*#{1,6}\s*','',text)
-    text=re.sub(r'\*+', '', text)
-    text=re.sub(r'(?m)^\s*[-•]\s+', '', text)
-    return re.sub(r'\n{3,}', '\n\n', text).strip()
+    text=re.sub(r'\*+','',text)
+    text=re.sub(r'(?m)^\s*[-•]\s+','',text)
+    text=text.replace('…','.')
+    text=re.sub(r'\.{4,}','... ',text)
+    return text.strip()
 
 
-def _has_all_transit_sections(text):
-    t=_clean_transit_answer(text)
-    return all(re.search(rf'(?m)^\s*{re.escape(h)}(?:.*)?$', t) for h in TRANSIT_SECTION_HEADERS)
-
-
-def _natural_trim(text, limit):
-    text=str(text or '').strip()
-    if len(text)<=limit:
-        return text
-    cut=text.rfind('\n\n', 0, limit)
-    if cut < int(limit*0.55):
-        cut=text.rfind('. ', 0, limit)
-        if cut>0:
-            cut+=1
-    if cut < int(limit*0.55):
-        cut=text.rfind(' ', 0, limit)
-    if cut<1:
-        cut=limit
-    return text[:cut].rstrip(' .,:;—-')+'…'
-
-
-def _hard_cap_transit_answer(text, max_chars=3300):
-    t=_clean_transit_answer(text)
-    if len(t)<=max_chars and _has_all_transit_sections(t):
-        return t
-    matches=list(re.finditer(r'(?m)^\s*(\d)\.\s+', t))
-    by_num={}
-    for i,m in enumerate(matches):
-        start=m.start()
-        end=matches[i+1].start() if i+1<len(matches) else len(t)
-        n=int(m.group(1))
-        if 1<=n<=9:
-            by_num[n]=t[start:end].strip()
-    budgets={1:280,2:760,3:400,4:320,5:320,6:260,7:300,8:240,9:250}
-    pieces=[]
-    for n in range(1,10):
-        block=by_num.get(n)
-        if not block:
-            raise ValueError(f'Не найден раздел прогноза {n}')
-        pieces.append(_natural_trim(block,budgets[n]))
-    result='\n\n'.join(pieces).strip()
-    if len(result)>max_chars:
-        for n in (9,8,7,6,5,4,3,1,2):
-            if len(result)<=max_chars:
-                break
-            extra=len(result)-max_chars
-            old=pieces[n-1]
-            pieces[n-1]=_natural_trim(old,max(120,len(old)-extra))
-            result='\n\n'.join(pieces).strip()
-    if len(result)>max_chars or not _has_all_transit_sections(result):
-        raise ValueError('Не удалось безопасно уложить прогноз в 3300 символов с сохранением 9 разделов')
+def _extract_sections(text):
+    result={}
+    for m in SECTION_RE.finditer(text):
+        result[m.group('num')]=(m.group('title').strip(),m.group('body').strip())
     return result
 
 
+def _sentence_chunks(text):
+    return [x.strip() for x in re.split(r'(?<=[.!?])\s+',str(text).strip()) if x.strip()]
+
+
+def _compact_body(body,budget):
+    body=re.sub(r'\s+',' ',str(body).strip())
+    if len(body)<=budget:
+        return body
+    out=[]; used=0
+    for sent in _sentence_chunks(body):
+        extra=len(sent)+(1 if out else 0)
+        if used+extra<=budget:
+            out.append(sent); used+=extra
+        else:
+            break
+    if out:
+        return ' '.join(out).strip()
+    cut=body.rfind(' ',0,max(1,budget-1))
+    if cut<80: cut=min(len(body),budget-1)
+    return body[:cut].rstrip(' ,;:-')+'.'
+
+
+def _fit_transit_answer(text,max_chars=3300):
+    text=_clean_transit_answer(text)
+    sections=_extract_sections(text)
+    if len(sections)!=9 or any(not sections.get(n,('', ''))[1] for n in '123456789'):
+        return text
+    if len(text)<=max_chars:
+        return text
+    budgets={'1':240,'2':850,'3':380,'4':300,'5':300,'6':230,'7':300,'8':250,'9':250}
+    pieces=[]
+    for n in '123456789':
+        title,body=sections[n]
+        pieces.append(f'{n}. {title if n=="1" else {"2":"Какие события могут произойти","3":"Что уже формируется","4":"Отношения","5":"Работа и деньги","6":"Эмоциональный фон","7":"Сроки и возможности","8":"Точки роста","9":"Итог"}[n]}')
+        pieces.append(_compact_body(body,budgets[n]))
+    result='\n\n'.join(pieces).strip()
+    if len(result)<=max_chars:
+        return result
+    # Second deterministic pass with balanced budgets, still preserving all 9 headings.
+    per=185
+    pieces=[]
+    for n in '123456789':
+        title,body=sections[n]
+        canonical=title if n=='1' else {"2":"Какие события могут произойти","3":"Что уже формируется","4":"Отношения","5":"Работа и деньги","6":"Эмоциональный фон","7":"Сроки и возможности","8":"Точки роста","9":"Итог"}[n]
+        pieces += [f'{n}. {canonical}', _compact_body(body, per)]
+    result='\n\n'.join(pieces).strip()
+    if len(result)<=max_chars:
+        return result
+    # Last safety: remove complete sentences from the longest section bodies first.
+    blocks=result.split('\n\n')
+    while len('\n\n'.join(blocks))>max_chars:
+        body_indexes=list(range(1,len(blocks),2))
+        idx=max(body_indexes,key=lambda i:len(blocks[i]))
+        sentences=_sentence_chunks(blocks[idx])
+        if len(sentences)>1:
+            blocks[idx]=' '.join(sentences[:-1])
+        else:
+            blocks[idx]=_compact_body(blocks[idx],max(100,len(blocks[idx])-20))
+    return '\n\n'.join(blocks).strip()
+
+
 async def _chad_transit_request(message, system_prompt, timeout=180, attempts=2):
-    timeout_cfg=aiohttp.ClientTimeout(total=timeout, connect=20, sock_connect=20, sock_read=max(30, timeout-10))
-    last_error=None
-    async with aiohttp.ClientSession(timeout=timeout_cfg) as session:
-        for attempt in range(1, attempts+1):
-            try:
-                payload={
-                    'message':message,
-                    'api_key':CHAD_API_KEY,
-                    'history':[{'role':'system','content':system_prompt}],
-                }
-                async with session.post(
-                    CHAD_API_URL,
-                    json=payload,
-                    headers={'Content-Type':'application/json','Authorization':f'Bearer {CHAD_API_KEY}'},
-                ) as response:
+    last_exc=None
+    for attempt in range(1, attempts+1):
+        try:
+            timeout_cfg=aiohttp.ClientTimeout(total=timeout,connect=20,sock_connect=20,sock_read=timeout-10)
+            async with aiohttp.ClientSession(timeout=timeout_cfg) as session:
+                payload={'message':message,'api_key':CHAD_API_KEY,'history':[{'role':'system','content':system_prompt}]}
+                async with session.post(CHAD_API_URL,json=payload,headers={'Content-Type':'application/json','Authorization':f'Bearer {CHAD_API_KEY}'}) as response:
                     body=await response.text()
                     print(f'[CHAD TRANSIT] response status={response.status} body_len={len(body)} attempt={attempt}',flush=True)
-                    if response.status in (429,502,503,504):
-                        last_error=RuntimeError(f'CHAD API HTTP {response.status}: {body[:1000]}')
-                        if attempt<attempts:
-                            delay=8 if response.status==429 else 3
-                            print(f'[CHAD TRANSIT] retrying after HTTP {response.status} in {delay}s',flush=True)
-                            await asyncio.sleep(delay)
-                            continue
-                        raise last_error
+                    if response.status in {502,503,504} and attempt<attempts:
+                        await asyncio.sleep(2*attempt)
+                        continue
                     if response.status>=400:
                         raise RuntimeError(f'CHAD API HTTP {response.status}: {body[:1000]}')
                     try:
@@ -307,41 +301,36 @@ async def _chad_transit_request(message, system_prompt, timeout=180, attempts=2)
                     if not str(answer).strip():
                         raise RuntimeError('CHAD API вернул пустую интерпретацию транзитов')
                     return str(answer).strip()
-            except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-                last_error=exc
-                print(f'[CHAD TRANSIT] transport error attempt={attempt}: {type(exc).__name__}: {exc}',flush=True)
-                if attempt<attempts:
-                    await asyncio.sleep(3)
-                    continue
-                raise
-    if last_error:
-        raise last_error
-    raise RuntimeError('Не удалось получить ответ CHAD')
+        except (aiohttp.ClientError,asyncio.TimeoutError,TimeoutError) as exc:
+            last_exc=exc
+            print(f'[CHAD TRANSIT] network error attempt={attempt}: {type(exc).__name__}: {exc}',flush=True)
+            if attempt<attempts:
+                await asyncio.sleep(2*attempt)
+                continue
+            raise
+    if last_exc: raise last_exc
+    raise RuntimeError('CHAD API: неизвестная ошибка запроса')
 
 
 async def ask_transit(calculation_text):
-    if not CHAD_API_URL:
-        raise RuntimeError('Не заполнен CHAD_API_URL')
-    if not CHAD_API_KEY:
-        raise RuntimeError('Не заполнен CHAD_API_KEY')
+    if not CHAD_API_URL: raise RuntimeError('Не заполнен CHAD_API_URL')
+    if not CHAD_API_KEY: raise RuntimeError('Не заполнен CHAD_API_KEY')
     user_message=(
         'Ниже приведён точный расчёт транзитов к натальной карте клиента. '
-        'Интерпретируй только эти данные и ничего не пересчитывай. '
-        'Сформируй прогноз строго по всем 9 разделам системного промпта.\n\n'+calculation_text
+        'Сразу создай один законченный прогноз из всех 9 разделов. '
+        'Соблюдай абсолютный максимум 3300 символов. Не пересчитывай данные.\n\n'+calculation_text
     )
-    answer=await _chad_transit_request(user_message, TRANSIT_SYSTEM_PROMPT, timeout=180, attempts=2)
+    answer=await _chad_transit_request(user_message,TRANSIT_SYSTEM_PROMPT,timeout=180,attempts=2)
     answer=_clean_transit_answer(answer)
-    if len(answer)<=3300 and _has_all_transit_sections(answer):
-        return answer
-
-    compact_prompt='''Ты — редактор уже готового астрологического прогноза. Не меняй его смысл и не добавляй новых астрологических фактов. Сохрани РОВНО все 9 пронумерованных разделов в исходном порядке. Сохрани ключевые конкретные события, поддерживающие аспекты и сроки. Удали повторы и второстепенные пояснения. Никакого Markdown. Итог — 2700–3150 символов, максимум 3200. Ответ обязательно должен закончиться разделом 9 и не обрываться.'''.strip()
-    compact=await _chad_transit_request(
-        'Сожми этот готовый прогноз до безопасного объёма, сохранив все 9 разделов:\n\n'+answer,
-        compact_prompt,
-        timeout=180,
-        attempts=2,
-    )
-    compact=_clean_transit_answer(compact)
-    if len(compact)<=3300 and _has_all_transit_sections(compact):
-        return compact
-    return _hard_cap_transit_answer(compact,3300)
+    sections=_extract_sections(answer)
+    if len(sections)!=9 or any(not sections.get(n,('', ''))[1] for n in '123456789'):
+        repair_prompt='''Верни законченный прогноз по переданному тексту. Сохрани все 9 разделов в точности в формате 1–9, конкретные события, аспекты и сроки. Не используй Markdown. Не ставь многоточия. Каждый раздел должен заканчиваться полноценными предложениями. Максимум 3000 символов.'''.strip()
+        repaired=await _chad_transit_request('Исправь только структуру и завершённость этого прогноза, не добавляя новых фактов:\n\n'+answer,repair_prompt,timeout=120,attempts=1)
+        answer=_clean_transit_answer(repaired)
+    answer=_fit_transit_answer(answer,3300)
+    sections=_extract_sections(answer)
+    if len(answer)>3300:
+        raise RuntimeError(f'Прогноз после сжатия превышает 3300 символов: {len(answer)}')
+    if len(sections)!=9 or any(not sections.get(n,('', ''))[1] for n in '123456789'):
+        raise RuntimeError('CHAD вернул неполный прогноз: необходимы все 9 разделов')
+    return answer
