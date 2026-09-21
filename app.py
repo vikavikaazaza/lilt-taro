@@ -209,6 +209,21 @@ async def transits_cmd(m): await transit_start(m)
 @router.message(Command('synastry'))
 async def synastry_cmd(m): await synastry_start(m)
 
+@router.callback_query(F.data.startswith('deck:'))
+async def deck_cb(c):
+    await c.answer()
+    uid=c.from_user.id
+    deck=c.data.split(':',1)[1]
+    if deck not in ('waite','manara'):
+        return
+    mode='premium' if premium_access(uid) else 'free'
+    db.set_pending(uid,deck,mode,'')
+    await c.message.answer(
+        f'Давай погадаем на {DECK_NAMES[deck]}\n\n'
+        'Сформулируй свой вопрос и напиши его полностью ❤️\n\n'
+        'Например: Что ждет меня в следующем месяце?'
+    )
+
 @router.callback_query(F.data=='transits')
 async def transits_cb(c):
     await c.answer()
