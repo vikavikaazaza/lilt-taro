@@ -138,11 +138,7 @@ def relation_mini_button():
 
 async def synastry_start(m, uid=None):
     uid=int(uid or m.from_user.id)
-    u=db.get(uid)
-    if not u or int(u['requests'])+int(u['paid_requests'])<=0:
-        await answer_user(m,'У вас осталось 0 запросов.')
-        await subscription(m)
-        return
+    # Синастрия бесплатная и доступна независимо от баланса запросов.
     await answer_user(m,'Сравним две натальные карты и посмотрим, как люди взаимодействуют друг с другом 💞\n\nВведи данные рождения обоих людей.',reply_markup=relation_mini_button())
 
 async def main_menu(m):
@@ -569,9 +565,7 @@ async def _send_pdf_report(uid: int, pdf_path: Path, caption: str, answer: str) 
 
 async def _run_transit(uid, payload, calc):
     try:
-        if not db.consume(uid,premium=True):
-            await send_user_message(uid,'У вас осталось 0 запросов. Оформите подписку, чтобы продолжить 🌟')
-            return
+        # Транзиты бесплатные: запросы пользователя не списываются.
         db.event(uid,'transit_calculated',f"{calc['transit_date']}|{calc['city']}")
         print(f'[TRANSITS] START uid={uid} date={calc["transit_date"]} city={calc["city"]}',flush=True)
         await send_user_message(uid,'Загружаем Вашу натальную карту, делаем расчет...\n\nПожалуйста, подождите, Лилит готовит Ваш персональный прогноз на выбранную дату 🌌')
@@ -598,8 +592,7 @@ async def _run_transit(uid, payload, calc):
     except Exception as e:
         print(f'[TRANSITS] ERROR uid={uid}: {type(e).__name__}: {e}',flush=True)
         try:
-            db.add(uid,1)
-            await send_user_message(uid,'Не удалось завершить расчёт транзитов. Запрос возвращён на баланс. Попробуй ещё раз немного позже.')
+            await send_user_message(uid,'Не удалось завершить расчёт транзитов. Попробуй ещё раз немного позже.')
         except Exception as inner:
             print(f'[TRANSITS] RECOVERY ERROR uid={uid}: {type(inner).__name__}: {inner}',flush=True)
 
@@ -698,8 +691,7 @@ async def synastry_preview_api(request:Request):
 
 async def _run_synastry(uid,payload,calc):
     try:
-        if not db.consume(uid,premium=True):
-            await send_user_message(uid,'У вас осталось 0 запросов. Оформите подписку, чтобы продолжить 🌟'); return
+        # Синастрия бесплатная: запросы пользователя не списываются.
         print(f'[SYNASTRY] START uid={uid}',flush=True)
         await send_user_message(uid,'Собираем две натальные карты и рассчитываем синастрию...\n\nПожалуйста, подождите, Лилит готовит Ваш персональный разбор отношений 💞')
         db.event(uid,'synastry_calculated',f'{calc["name1"]}|{calc["name2"]}')
@@ -721,7 +713,7 @@ async def _run_synastry(uid,payload,calc):
         print(f'[SYNASTRY] DONE uid={uid}',flush=True)
     except Exception as e:
         print(f'[SYNASTRY] ERROR uid={uid}: {type(e).__name__}: {e}',flush=True)
-        try: db.add(uid,1); await send_user_message(uid,'Не удалось завершить синастрию. Запрос возвращён на баланс. Попробуй ещё раз немного позже.')
+        try: await send_user_message(uid,'Не удалось завершить синастрию. Попробуй ещё раз немного позже.')
         except Exception as inner: print(f'[SYNASTRY] RECOVERY ERROR uid={uid}: {type(inner).__name__}: {inner}',flush=True)
 
 
