@@ -75,6 +75,24 @@ def init():
           created_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_transit_readings_user_created ON transit_readings(user_id, created_at, id);
+        CREATE TABLE IF NOT EXISTS synastry_profiles(
+          user_id INTEGER PRIMARY KEY,
+          name1 TEXT NOT NULL DEFAULT '', birth_date1 TEXT NOT NULL, birth_time1 TEXT, time_known1 INTEGER NOT NULL DEFAULT 0,
+          city1 TEXT NOT NULL, latitude1 REAL NOT NULL, longitude1 REAL NOT NULL, timezone1 TEXT NOT NULL,
+          name2 TEXT NOT NULL DEFAULT '', birth_date2 TEXT NOT NULL, birth_time2 TEXT, time_known2 INTEGER NOT NULL DEFAULT 0,
+          city2 TEXT NOT NULL, latitude2 REAL NOT NULL, longitude2 REAL NOT NULL, timezone2 TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS synastry_readings(
+          id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, name1 TEXT, name2 TEXT,
+          input_data TEXT NOT NULL, calculation TEXT NOT NULL, answer TEXT NOT NULL, created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_synastry_readings_user_created ON synastry_readings(user_id, created_at, id);
+        CREATE TABLE IF NOT EXISTS synastry_transit_readings(
+          id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, name1 TEXT, name2 TEXT, transit_date TEXT NOT NULL,
+          input_data TEXT NOT NULL, calculation TEXT NOT NULL, answer TEXT NOT NULL, created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_synastry_transit_readings_user_created ON synastry_transit_readings(user_id, created_at, id);
         ''')
         # Upgrade older databases safely.
         cols={r['name'] for r in c.execute('PRAGMA table_info(users)').fetchall()}
@@ -164,6 +182,35 @@ def save_transit_reading(uid, transit_date, city, input_data, calculation, answe
 def user_transit_readings(uid, limit=100):
     with conn() as c:
         return c.execute('SELECT * FROM transit_readings WHERE user_id=? ORDER BY created_at ASC, id ASC LIMIT ?',(int(uid),int(limit))).fetchall()
+def save_synastry_profile(uid, name1, p1, name2, p2):
+    with conn() as c:
+        c.execute(
+            'INSERT INTO synastry_profiles(user_id,name1,birth_date1,birth_time1,time_known1,city1,latitude1,longitude1,timezone1,name2,birth_date2,birth_time2,time_known2,city2,latitude2,longitude2,timezone2,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) '
+            'ON CONFLICT(user_id) DO UPDATE SET name1=excluded.name1,birth_date1=excluded.birth_date1,birth_time1=excluded.birth_time1,time_known1=excluded.time_known1,city1=excluded.city1,latitude1=excluded.latitude1,longitude1=excluded.longitude1,timezone1=excluded.timezone1,name2=excluded.name2,birth_date2=excluded.birth_date2,birth_time2=excluded.birth_time2,time_known2=excluded.time_known2,city2=excluded.city2,latitude2=excluded.latitude2,longitude2=excluded.longitude2,timezone2=excluded.timezone2,updated_at=excluded.updated_at',
+            (int(uid),str(name1 or ''),p1['birth_date'].isoformat(),p1.get('birth_time').strftime('%H:%M') if p1.get('birth_time') else None,int(bool(p1.get('time_known'))),str(p1['city']),float(p1['lat']),float(p1['lon']),str(p1['timezone']),str(name2 or ''),p2['birth_date'].isoformat(),p2.get('birth_time').strftime('%H:%M') if p2.get('birth_time') else None,int(bool(p2.get('time_known'))),str(p2['city']),float(p2['lat']),float(p2['lon']),str(p2['timezone']),now())
+        )
+        return c.execute('SELECT * FROM synastry_profiles WHERE user_id=?',(int(uid),)).fetchone()
+
+def synastry_profile(uid):
+    with conn() as c:
+        return c.execute('SELECT * FROM synastry_profiles WHERE user_id=?',(int(uid),)).fetchone()
+
+def save_synastry_reading(uid,name1,name2,input_data,calculation,answer):
+    with conn() as c:
+        c.execute('INSERT INTO synastry_readings(user_id,name1,name2,input_data,calculation,answer,created_at) VALUES(?,?,?,?,?,?,?)',(int(uid),str(name1 or ''),str(name2 or ''),str(input_data),str(calculation),str(answer),now()))
+
+def user_synastry_readings(uid,limit=100):
+    with conn() as c:
+        return c.execute('SELECT * FROM synastry_readings WHERE user_id=? ORDER BY created_at ASC,id ASC LIMIT ?',(int(uid),int(limit))).fetchall()
+
+def save_synastry_transit_reading(uid,name1,name2,transit_date,input_data,calculation,answer):
+    with conn() as c:
+        c.execute('INSERT INTO synastry_transit_readings(user_id,name1,name2,transit_date,input_data,calculation,answer,created_at) VALUES(?,?,?,?,?,?,?,?)',(int(uid),str(name1 or ''),str(name2 or ''),str(transit_date),str(input_data),str(calculation),str(answer),now()))
+
+def user_synastry_transit_readings(uid,limit=100):
+    with conn() as c:
+        return c.execute('SELECT * FROM synastry_transit_readings WHERE user_id=? ORDER BY created_at ASC,id ASC LIMIT ?',(int(uid),int(limit))).fetchall()
+
 def set_pending(uid,deck,mode,question):
     with conn() as c: c.execute('INSERT INTO pending(user_id,deck,mode,question,created_at) VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET deck=excluded.deck,mode=excluded.mode,question=excluded.question,created_at=excluded.created_at',(uid,deck,mode,question,now()))
 
