@@ -19,6 +19,23 @@ from pdf_reports import build_synastry_pdf
 from astro_reports import build_synastry_interpretation
 
 BASE=Path(__file__).resolve().parent
+
+REPORT_DIR = BASE / 'generated_reports'
+
+def _report_path(uid: int, kind: str, suffix: str = 'pdf') -> Path:
+    REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    token = secrets.token_hex(6)
+    safe_kind = re.sub(r'[^a-zA-Z0-9_-]+', '_', str(kind)).strip('_') or 'report'
+    return REPORT_DIR / f'{safe_kind}_{uid}_{token}.{suffix}'
+
+async def _send_pdf_report(uid: int, pdf_path: Path, caption: str, answer: str) -> None:
+    # Сохраняем полный текст в истории диалога и отправляем пользователю PDF.
+    try:
+        db.log_message(int(uid), 'bot', answer, 'report')
+    except Exception as e:
+        print(f'[REPORT] history log error uid={uid}: {type(e).__name__}: {e}', flush=True)
+    await bot.send_document(uid, FSInputFile(pdf_path), caption=caption)
+
 router=Router()
 bot: Bot
 BROADCAST_TASKS=set()
