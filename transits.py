@@ -254,7 +254,6 @@ def calculate_transits(
             continue
         seen_pairs.add(key)
         unique_aspects.append(a)
-    unique_aspects = unique_aspects[:24]
 
     return {
         'city': city,
