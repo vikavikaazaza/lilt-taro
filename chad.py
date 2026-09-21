@@ -1,6 +1,7 @@
 import asyncio
 import aiohttp
 import config
+import re
 
 MANARA_NAMES=[
 'Дурак','Маг','Верховная Жрица','Императрица','Император','Верховный Жрец','Возлюбленные','Колесница','Справедливость','Отшельник','Зеркало','Сила','Наказание','Смерть','Умеренность','Дьявол','Башня','Звезда','Луна','Солнце','Суд','Мир',
@@ -347,3 +348,220 @@ async def ask_transit(calculation_text):
             str(all(_section_body_complete(sections.get(n,('', ''))[1]) for n in '123456789'))
         )
     return repaired
+
+
+SYNASTRY_SYSTEM_PROMPT = '''
+Ты — Лилит, персональный эзотерический консультант. Ты получаешь ГОТОВЫЙ расчёт синастрии двух натальных карт и делаешь персональный разбор их отношений.
+
+Используй ТОЛЬКО переданные расчётные данные. Не пересчитывай планеты, аспекты, орбисы, дома или углы и не добавляй показатели, которых нет в расчёте.
+
+Не делай расплывчатый текст о «совместимости вообще». Переводи показатели в конкретную динамику пары и возможные жизненные проявления: сильное притяжение, ревность, различие потребностей, повторяющиеся конфликты, совместные планы, финансовые споры, желание жить вместе, поддержка карьеры, расставание или возвращение к отношениям, официальный статус, трудности с доверием, сексуальная динамика, бытовые разногласия и другие сценарии — только если они действительно поддержаны расчётом.
+
+Не утверждай неизбежность событий. Используй формулировки «может проявляться», «вероятна динамика», «может приводить», «есть вероятность».
+
+Особое внимание уделяй Солнцу, Луне, Венере, Марсу, Меркурию, Юпитеру и Сатурну. Сильные и точные аспекты описывай подробнее. Длительные планеты показывай как более глубокие процессы. Учитывай дома, если они рассчитаны; не используй дома и углы человека, если время его рождения неизвестно.
+
+Не используй Markdown. Никаких #, *, жирного, курсива, маркеров и многоточий для обрыва текста. Используй обычные заголовки и нумерацию.
+
+ОБЯЗАТЕЛЬНО напиши все 8 разделов. Каждый раздел должен быть законченным.
+
+1. Главная динамика пары
+2–3 предложения о том, что прежде всего связывает и одновременно напрягает этих людей.
+
+2. Что притягивает
+Конкретно объясни, за счёт каких аспектов возникает эмоциональное, интеллектуальное, романтическое или сексуальное притяжение.
+
+3. Где возникают конфликты
+Назови 2–3 наиболее вероятные повторяющиеся проблемы и свяжи каждую с конкретными аспектами.
+
+4. Любовь и близость
+Опиши вероятную модель проявления чувств, ревности, доверия, сексуальности и потребности в близости.
+
+5. Быт, деньги и совместная жизнь
+Покажи, как пара может взаимодействовать в бытовых вопросах, общих расходах, ответственности, переезде или совместных планах, если это поддержано домами и аспектами.
+
+6. Потенциал отношений
+Опиши, что помогает сохранять связь и что может разрушать её. Отдельно укажи признаки серьёзного долгосрочного сценария, если они есть в расчёте.
+
+7. Точки роста
+Назови 3 конкретных урока или качества, которые каждому человеку важно развивать в этой связи.
+
+8. Итог
+Дай ясный вывод о характере связи и о том, на какие реальные проявления в отношениях стоит смотреть.
+
+Полный список синастрических аспектов показывается клиенту отдельно в приложении. Не трать сообщение на механическое перечисление всех аспектов.
+
+ОБЪЁМ: целевой 2600–3000 символов, абсолютный максимум 3300. Все 8 разделов обязательны. Если нужно сокращать, сокращай формулировки внутри разделов, но не удаляй разделы и не обрывай предложения.
+'''.strip()
+
+SYNASTRY_TRANSIT_SYSTEM_PROMPT = '''
+Ты — Лилит, персональный эзотерический консультант. Ты получаешь ГОТОВУЮ синастрию двух людей и ГОТОВЫЙ расчёт транзитов на выбранную дату к картам обоих людей. Сделай персональный прогноз именно для отношений этой пары на выбранную дату.
+
+Используй ТОЛЬКО переданные расчётные данные. Не пересчитывай планеты, аспекты, орбисы, дома или углы.
+
+Сначала отдели устойчивую природу связи от временного периода. Затем объясни, какие темы отношений активируются транзитами сейчас.
+
+Будь конкретной. Называй возможные события и реальные проявления: важный разговор, примирение, ссора, предложение, решение съехаться или разъехаться, поездка, оформление отношений, знакомство с семьёй, совместная покупка, финансовый спор, изменение планов, возвращение к незавершённой теме, усиление притяжения, охлаждение, пауза, решение о будущем отношений и другие сценарии — только если они действительно поддержаны расчётом.
+
+Учитывай состояние аспекта: сходящийся — тема набирает силу; точный — пик около выбранной даты; расходящийся — последствия или развязка. Ретроградность — возврат, повторное обсуждение, пересмотр, задержка или возвращение человека/темы. Сроки выражай только как сегодня, ближайшие дни, недели или месяцы.
+
+Не утверждай неизбежность событий. Не используй Markdown: никаких #, *, жирного, курсива, маркеров и многоточий для обрыва текста.
+
+ОБЯЗАТЕЛЬНО все 8 разделов:
+
+1. Прогноз отношений на [дата]
+Главный сюжет периода в 2–3 предложениях.
+
+2. Какие события могут произойти
+Дай 3–4 конкретных сценария. Для каждого: событие → какие транзиты его поддерживают → срок.
+
+3. Что уже формируется
+Покажи 1–2 долгих процесса и их связь с базовой синастрией.
+
+4. Эмоциональный фон пары
+Почему отношения могут ощущаться более тёплыми, напряжёнными, нестабильными или притягательными.
+
+5. Любовь, близость и конфликт
+Что вероятнее усиливается в чувствах и где возможна точка напряжения.
+
+6. Сроки и возможности
+Что можно обсуждать или начинать сейчас; что лучше перепроверить; что не стоит форсировать. Для каждого — горизонт времени.
+
+7. Точки роста
+3 качества или урока, которые особенно важны паре сейчас.
+
+8. Итог
+2–4 законченных предложения о главном сценарии периода.
+
+Полные списки базовых синастрических аспектов и текущих транзитных аспектов показываются отдельно в приложении. Не перечисляй их механически в сообщении.
+
+ОБЪЁМ: целевой 2600–3000 символов, абсолютный максимум 3300. Все 8 разделов обязательны. Никогда не обрывай раздел или предложение ради объёма.
+'''.strip()
+
+RELATION_SECTION_RE = re.compile(r'(?ms)^(?P<num>[1-8])\.\s*(?P<title>[^\n]+)\n(?P<body>.*?)(?=^\d+\.\s|\Z)')
+
+
+def _clean_relation_answer(text):
+    text=str(text or '').replace('```','')
+    text=re.sub(r'(?m)^\s*#{1,6}\s*','',text)
+    text=re.sub(r'\*+','',text)
+    text=re.sub(r'(?m)^\s*[-•]\s+','',text)
+    text=text.replace('…','.')
+    return text.strip()
+
+
+def _extract_relation_sections(text):
+    return {m.group('num'):(m.group('title').strip(),m.group('body').strip()) for m in RELATION_SECTION_RE.finditer(text)}
+
+
+def _relation_sentences(text):
+    return [x.strip() for x in re.split(r'(?<=[.!?])\s+',str(text).strip()) if x.strip()]
+
+
+def _fit_relation_answer(text, max_chars=3300):
+    text=_clean_relation_answer(text)
+    sections=_extract_relation_sections(text)
+    if len(sections)!=8 or any(not sections.get(n,('', ''))[1] for n in '12345678'):
+        return text
+    if len(text)<=max_chars:
+        return text
+    budgets={'1':330,'2':480,'3':480,'4':430,'5':420,'6':470,'7':350,'8':330}
+    out=[]
+    canonical={'1':'Главная динамика пары','2':'Что притягивает','3':'Где возникают конфликты','4':'Любовь и близость','5':'Быт, деньги и совместная жизнь','6':'Потенциал отношений','7':'Точки роста','8':'Итог'}
+    for n in '12345678':
+        body=re.sub(r'\s+',' ',sections[n][1])
+        out.append(f'{n}. {canonical[n]}')
+        if len(body)<=budgets[n]:
+            out.append(body)
+        else:
+            sents=_relation_sentences(body)
+            acc=[]; used=0
+            for sent in sents:
+                extra=len(sent)+(1 if acc else 0)
+                if used+extra<=budgets[n]:
+                    acc.append(sent); used+=extra
+                else:
+                    break
+            out.append(' '.join(acc) if acc else body[:max(80,budgets[n]-1)].rsplit(' ',1)[0]+'.')
+    result='\n\n'.join(out).strip()
+    if len(result)<=max_chars:
+        return result
+    # Remove whole sentences from the longest body while keeping all 8 sections.
+    blocks=result.split('\n\n')
+    while len('\n\n'.join(blocks))>max_chars:
+        body_indexes=list(range(1,len(blocks),2))
+        idx=max(body_indexes,key=lambda i:len(blocks[i]))
+        sents=_relation_sentences(blocks[idx])
+        if len(sents)>1:
+            blocks[idx]=' '.join(sents[:-1]).strip()
+        else:
+            blocks[idx]=blocks[idx][:max(60,len(blocks[idx])-20)].rsplit(' ',1)[0]+'.'
+    return '\n\n'.join(blocks).strip()
+
+
+async def _chad_relation_request(message, system_prompt, timeout=180, attempts=2):
+    last_exc=None
+    for attempt in range(1, attempts+1):
+        try:
+            timeout_cfg=aiohttp.ClientTimeout(total=timeout,connect=20,sock_connect=20,sock_read=timeout-10)
+            async with aiohttp.ClientSession(timeout=timeout_cfg) as session:
+                payload={'message':message,'api_key':CHAD_API_KEY,'history':[{'role':'system','content':system_prompt}]}
+                async with session.post(CHAD_API_URL,json=payload,headers={'Content-Type':'application/json','Authorization':f'Bearer {CHAD_API_KEY}'}) as response:
+                    body=await response.text()
+                    print(f'[CHAD RELATION] response status={response.status} body_len={len(body)} attempt={attempt}',flush=True)
+                    if response.status in {502,503,504} and attempt<attempts:
+                        await asyncio.sleep(2*attempt)
+                        continue
+                    if response.status>=400:
+                        raise RuntimeError(f'CHAD API HTTP {response.status}: {body[:1000]}')
+                    try:
+                        data=await response.json(content_type=None)
+                    except Exception:
+                        data={}
+                    answer=''
+                    if isinstance(data,dict):
+                        answer=data.get('message') or data.get('answer') or data.get('response') or data.get('text') or ''
+                    if not answer and body.strip(): answer=body.strip()
+                    if not str(answer).strip(): raise RuntimeError('CHAD API вернул пустой ответ')
+                    return str(answer).strip()
+        except (aiohttp.ClientError,asyncio.TimeoutError,TimeoutError) as exc:
+            last_exc=exc
+            print(f'[CHAD RELATION] network error attempt={attempt}: {type(exc).__name__}: {exc}',flush=True)
+            if attempt<attempts:
+                await asyncio.sleep(2*attempt)
+                continue
+            raise
+    if last_exc: raise last_exc
+    raise RuntimeError('CHAD API: неизвестная ошибка запроса')
+
+
+async def _ask_relation(calculation_text, prompt, label):
+    if not CHAD_API_URL: raise RuntimeError('Не заполнен CHAD_API_URL')
+    if not CHAD_API_KEY: raise RuntimeError('Не заполнен CHAD_API_KEY')
+    user_message=(
+        f'Ниже приведён точный расчёт для задачи «{label}». '
+        'Сразу создай один законченный ответ в требуемой структуре. '
+        'Сохрани все обязательные разделы и абсолютный максимум 3300 символов.\n\n'+calculation_text
+    )
+    answer=await _chad_relation_request(user_message,prompt,timeout=180,attempts=2)
+    answer=_clean_relation_answer(answer)
+    sections=_extract_relation_sections(answer)
+    if len(sections)!=8 or any(not sections.get(n,('', ''))[1] for n in '12345678'):
+        repair_prompt='''Верни только исправленный, законченный ответ по исходному тексту. Сохрани все 8 нумерованных разделов, конкретные выводы и факты. Никакого Markdown и никаких многоточий. Не добавляй новых астрологических данных. Максимум 3000 символов.'''.strip()
+        repaired=await _chad_relation_request('Исправь только структуру и завершённость этого ответа:\n\n'+answer,repair_prompt,timeout=120,attempts=1)
+        answer=_clean_relation_answer(repaired)
+    answer=_fit_relation_answer(answer,3300)
+    if len(answer)>3300:
+        raise RuntimeError(f'Ответ после обработки превышает 3300 символов: {len(answer)}')
+    sections=_extract_relation_sections(answer)
+    if len(sections)!=8 or any(not sections.get(n,('', ''))[1] for n in '12345678'):
+        raise RuntimeError('CHAD вернул неполный ответ: необходимы все 8 разделов')
+    return answer
+
+
+async def ask_synastry(calculation_text):
+    return await _ask_relation(calculation_text, SYNASTRY_SYSTEM_PROMPT, 'синастрия')
+
+
+async def ask_synastry_transits(calculation_text):
+    return await _ask_relation(calculation_text, SYNASTRY_TRANSIT_SYSTEM_PROMPT, 'транзиты синастрии')
