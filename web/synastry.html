@@ -43,7 +43,34 @@ setupPerson(1);setupPerson(2);
 document.addEventListener('click',e=>{for(const n of [1,2])if(!e.target.closest(`#p${n}-city`)&&!e.target.closest(`#p${n}-find`)&&!e.target.closest(`#p${n}-suggest`))document.getElementById(`p${n}-suggest`).hidden=true});
 async function loadProfile(){if(!initData)return;try{const r=await fetch('/api/synastry/profile?initData='+encodeURIComponent(initData),{cache:'no-store'});if(!r.ok)return;const d=await r.json();if(!d.profile)return;for(const n of [1,2]){const p=d.profile[`person${n}`];if(!p)continue;document.getElementById(`p${n}-name`).value=p.name||'';document.getElementById(`p${n}-date`).value=p.birth_date||'';document.getElementById(`p${n}-time`).value=p.birth_time||'';document.getElementById(`p${n}-unknown`).checked=!p.time_known;document.getElementById(`p${n}-time`).disabled=!p.time_known;document.getElementById(`p${n}-city`).value=p.city||'';state[`person${n}`]={display_name:p.city,lat:p.lat,lon:p.lon};}}catch(e){console.warn(e)}}loadProfile();
 function validate(){if(!initData){showStatus('Открой приложение из Telegram.');return false}for(const n of [1,2]){const p=getPerson(n);if(!p.birth_date){showStatus(`Укажи дату рождения человека ${n}.`);return false}if(p.time_known&&!p.birth_time){showStatus(`Укажи время рождения человека ${n} или выбери «Не знаю время».`);return false}if(!state[`person${n}`]){showStatus(`Выбери город рождения человека ${n} из найденных вариантов.`);return false}}return true}
-function render(data){const box=document.getElementById('aspects');box.innerHTML='';if(!(data.aspects||[]).length){box.innerHTML='<div class="aspect">Значимых межпланетных аспектов не найдено.</div>';return}for(const a of data.aspects){const el=document.createElement('div');el.className='aspect';el.textContent=`${a.person1_planet} ${a.aspect} ${a.person2_planet}`;const sm=document.createElement('small');sm.textContent=`${a.person1_sign} · ${a.person2_sign} · орб ${a.orb_text} · ${a.relationship_weight}`;el.appendChild(sm);box.appendChild(el)}for(const a of data.angle_aspects||[]){const el=document.createElement('div');el.className='aspect';el.textContent=`Углы: человек ${a.from_person} ${a.planet} ${a.aspect} ${a.point} человека ${a.to_person}`;const sm=document.createElement('small');sm.textContent=`орб ${a.orb_text}`;el.appendChild(sm);box.appendChild(el)}}
+function render(data){
+ const box=document.getElementById('aspects');box.innerHTML='';
+ const groups=[
+  ['Уровень совместимости','compatibility_aspects'],
+  ['Эмоциональный контакт · Луна — Венера','emotional_aspects'],
+  ['Притяжение и страсть · Марс — Солнце','attraction_aspects'],
+  ['Сферы конфликтов · квадраты и оппозиции','conflict_aspects'],
+  ['Перспективы союза · Юпитер и Сатурн','perspective_aspects']
+ ];
+ let shown=0;
+ for(const [title,key] of groups){
+  const items=data[key]||[];
+  const header=document.createElement('div');header.className='section-title';header.textContent=title;box.appendChild(header);
+  if(!items.length){
+   const empty=document.createElement('div');empty.className='aspect';empty.textContent='В расчёте нет аспектов этого типа.';box.appendChild(empty);continue;
+  }
+  shown+=items.length;
+  for(const a of items){
+   const el=document.createElement('div');el.className='aspect';el.textContent=`${a.person1_planet} ${a.aspect} ${a.person2_planet}`;
+   const sm=document.createElement('small');sm.textContent=`${a.person1_sign} · ${a.person2_sign} · орб ${a.orb_text} · ${a.relationship_weight}`;el.appendChild(sm);box.appendChild(el);
+  }
+ }
+ const other=(data.aspects||[]).filter(a=>!shown || true);
+ const extraWrap=document.createElement('div');extraWrap.className='section-title';extraWrap.textContent=`Все значимые аспекты · ${data.aspect_count||0}`;box.appendChild(extraWrap);
+ if(!(data.aspects||[]).length){const empty=document.createElement('div');empty.className='aspect';empty.textContent='Значимых межпланетных аспектов не найдено.';box.appendChild(empty);}
+ else {for(const a of data.aspects){const el=document.createElement('div');el.className='aspect';el.textContent=`${a.person1_planet} ${a.aspect} ${a.person2_planet}`;const sm=document.createElement('small');sm.textContent=`${a.person1_sign} · ${a.person2_sign} · орб ${a.orb_text} · ${a.relationship_weight}`;el.appendChild(sm);box.appendChild(el)}}
+ for(const a of data.angle_aspects||[]){const el=document.createElement('div');el.className='aspect';el.textContent=`Углы: человек ${a.from_person} ${a.planet} ${a.aspect} ${a.point} человека ${a.to_person}`;const sm=document.createElement('small');sm.textContent=`орб ${a.orb_text}`;el.appendChild(sm);box.appendChild(el)}
+}
 async function preview(){if(!validate())return;const btn=document.getElementById('preview');btn.disabled=true;btn.textContent='Считаю…';try{const r=await fetch('/api/synastry/preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({initData,person1:getPerson(1),person2:getPerson(2)})});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||'Не удалось рассчитать аспекты');render(d);showStatus(`Найдено аспектов: ${d.aspect_count||0}.`)}catch(e){console.error(e);showStatus(e.message||'Не удалось рассчитать аспекты.')}finally{btn.disabled=false;btn.textContent='Показать аспекты'}}
 document.getElementById('preview').onclick=preview;
 document.getElementById('submit').onclick=async()=>{if(submitting||!validate())return;submitting=true;const btn=document.getElementById('submit');btn.disabled=true;showStatus('Данные приняты. Собираем две натальные карты…');try{const r=await fetch('/api/synastry/calculate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({initData,person1:getPerson(1),person2:getPerson(2)})});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||'Не удалось запустить расчёт');showStatus('Расчёт запущен ✨ Вернись в Telegram — Лилит пришлёт разбор.');try{tg?.HapticFeedback?.impactOccurred?.('medium')}catch(e){}setTimeout(()=>{try{tg?.close?.()}catch(e){}},900)}catch(e){console.error(e);submitting=false;btn.disabled=false;showStatus(e.message||'Не удалось запустить расчёт.')}};
