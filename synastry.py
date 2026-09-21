@@ -37,6 +37,51 @@ ANGLE_ORB = 5.0
 ANGLES = ('ASC', 'MC', 'DSC', 'IC')
 
 
+def _aspect_key(a: dict[str, Any]) -> tuple[str, str]:
+    return str(a.get('person1_planet', '')), str(a.get('person2_planet', ''))
+
+
+def _pair_is(a: dict[str, Any], left: str, right: str) -> bool:
+    p1, p2 = _aspect_key(a)
+    return (p1 == left and p2 == right) or (p1 == right and p2 == left)
+
+
+def _has_planet(a: dict[str, Any], planet: str) -> bool:
+    p1, p2 = _aspect_key(a)
+    return p1 == planet or p2 == planet
+
+
+def _build_synastry_focus(aspects: list[dict[str, Any]], angle_aspects: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """Prepare explicit focus groups for the client-facing synastry reading.
+
+    The groups intentionally overlap: one aspect may inform several relationship themes.
+    """
+    emotional = [a for a in aspects if _pair_is(a, 'Луна', 'Венера')]
+    attraction = [a for a in aspects if _pair_is(a, 'Марс', 'Солнце')]
+
+    # Communication, mutual understanding, social support and durable structure.
+    compatibility = [
+        a for a in aspects
+        if _has_planet(a, 'Солнце') or _has_planet(a, 'Меркурий')
+        or _has_planet(a, 'Юпитер') or _has_planet(a, 'Сатурн')
+    ]
+
+    # Hard major aspects are the cleanest technical block for recurring friction.
+    conflict = [a for a in aspects if a.get('aspect') in {'Квадрат', 'Оппозиция'}]
+
+    # Long-term direction and durability: Saturn/Jupiter contacts plus contacts to angles.
+    perspective = [a for a in aspects if _has_planet(a, 'Сатурн') or _has_planet(a, 'Юпитер')]
+
+    return {
+        'compatibility_aspects': compatibility,
+        'emotional_aspects': emotional,
+        'attraction_aspects': attraction,
+        'conflict_aspects': conflict,
+        'perspective_aspects': perspective,
+        'angle_aspects': angle_aspects,
+    }
+
+
 def _local_birth_to_utc(birth_date: date, birth_time: time | None, tz_name: str) -> tuple[datetime, bool]:
     try:
         zone = ZoneInfo(tz_name)
@@ -181,6 +226,8 @@ def calculate_synastry(
             if house:
                 overlays_2_in_1.append({'planet': n2, 'house': house})
 
+    focus = _build_synastry_focus(aspects, angle_aspects)
+
     return {
         'name1': name1.strip(),
         'name2': name2.strip(),
@@ -190,6 +237,7 @@ def calculate_synastry(
         'angle_aspects': angle_aspects,
         'overlays_1_in_2': overlays_1_in_2,
         'overlays_2_in_1': overlays_2_in_1,
+        **focus,
         'aspect_count': len(aspects),
         'angle_aspect_count': len(angle_aspects),
         'ephemeris_engine': 'Swiss Ephemeris / pysweph',
@@ -254,6 +302,33 @@ def calculation_for_ai(calc: dict[str, Any]) -> str:
         for a in calc['angle_aspects']:
             from_name = calc['name1'] or 'Человека 1' if a['from_person'] == 1 else calc['name2'] or 'Человека 2'
             to_name = calc['name2'] or 'Человека 2' if a['to_person'] == 2 else calc['name1'] or 'Человека 1'
+            lines.append(f"- {from_name}: {a['planet']} {a['aspect']} {to_name} {a['point']} (орб {a['orb_text']})")
+
+    lines += ['', 'КЛЮЧЕВЫЕ БЛОКИ ДЛЯ ПЕРСОНАЛЬНОГО РАЗБОРА:']
+
+    focus_specs = [
+        ('УРОВЕНЬ СОВМЕСТИМОСТИ:', calc.get('compatibility_aspects', [])),
+        ('ЭМОЦИОНАЛЬНЫЙ КОНТАКТ (ЛУНА — ВЕНЕРА):', calc.get('emotional_aspects', [])),
+        ('ПРИТЯЖЕНИЕ И СТРАСТЬ (МАРС — СОЛНЦЕ):', calc.get('attraction_aspects', [])),
+        ('СФЕРЫ КОНФЛИКТОВ (КВАДРАТЫ И ОППОЗИЦИИ):', calc.get('conflict_aspects', [])),
+        ('ПЕРСПЕКТИВЫ СОЮЗА (ЮПИТЕР, САТУРН И ДОЛГОСРОЧНЫЕ СВЯЗИ):', calc.get('perspective_aspects', [])),
+    ]
+    for title, items in focus_specs:
+        lines.append(title)
+        if items:
+            for a in items:
+                lines.append(
+                    f"- {a['person1_planet']} {a['aspect']} {a['person2_planet']} "
+                    f"(орб {a['orb_text']}; {a['person1_sign']} → {a['person2_sign']})"
+                )
+        else:
+            lines.append('- В расчёте нет аспектов, попадающих в этот блок.')
+
+    if calc.get('angle_aspects'):
+        lines.append('УГЛЫ И ТОЧКИ КАРТ:')
+        for a in calc['angle_aspects']:
+            from_name = calc['name1'] or 'Человек 1' if a['from_person'] == 1 else calc['name2'] or 'Человек 2'
+            to_name = calc['name2'] or 'Человек 2' if a['to_person'] == 2 else calc['name1'] or 'Человек 1'
             lines.append(f"- {from_name}: {a['planet']} {a['aspect']} {to_name} {a['point']} (орб {a['orb_text']})")
 
     if calc['overlays_1_in_2']:
