@@ -45,6 +45,54 @@ RELATION_MINIAPP_VERSION='1'
 NOMINATIM_LOCK=asyncio.Lock()
 NOMINATIM_LAST=0.0
 
+
+async def _geocode_city(query: str, limit: int = 5):
+    """Ищет город через Nominatim и возвращает координаты для синастрии."""
+    global NOMINATIM_LAST
+    q = str(query or '').strip()
+    if len(q) < 2:
+        return []
+
+    async with NOMINATIM_LOCK:
+        loop = asyncio.get_running_loop()
+        wait = 1.05 - (loop.time() - NOMINATIM_LAST)
+        if wait > 0:
+            await asyncio.sleep(wait)
+
+        params = {
+            'q': q,
+            'format': 'jsonv2',
+            'limit': str(max(1, min(int(limit or 5), 5))),
+            'addressdetails': '1',
+            'accept-language': 'ru',
+        }
+        headers = {'User-Agent': 'LilitTaroBot/1.0 (city search)'}
+        timeout = aiohttp.ClientTimeout(total=12, connect=8, sock_connect=8, sock_read=10)
+        try:
+            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+                async with session.get(
+                    'https://nominatim.openstreetmap.org/search', params=params
+                ) as resp:
+                    NOMINATIM_LAST = loop.time()
+                    if resp.status >= 400:
+                        raise RuntimeError(f'geocoder HTTP {resp.status}')
+                    data = await resp.json(content_type=None)
+        except Exception as exc:
+            print(f'[GEOCODE] error: {type(exc).__name__}: {exc}', flush=True)
+            return []
+
+    out = []
+    for item in data if isinstance(data, list) else []:
+        try:
+            out.append({
+                'display_name': str(item.get('display_name') or q),
+                'lat': float(item['lat']),
+                'lon': float(item['lon']),
+            })
+        except Exception:
+            continue
+    return out
+
 class DialogueMiddleware(BaseMiddleware):
     async def __call__(self, handler, event, data):
         if isinstance(event, types.Message) and event.from_user:
@@ -447,6 +495,11 @@ def _relation_input_json(p1,p2,transit_date=None):
 async def synastry_miniapp():
     return FileResponse(BASE/'web'/'synastry.html',headers={'Cache-Control':'no-store, no-cache, must-revalidate, max-age=0'})
 
+
+
+@app.get('/api/transits/cities')
+async def transit_cities(q: str = ''):
+    return {'cities': await _geocode_city(q, 5)}
 
 @app.get('/api/synastry/profile')
 async def synastry_profile_api(request:Request):
