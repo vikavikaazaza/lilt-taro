@@ -88,12 +88,11 @@ DECK_NAMES={'waite':'Таро Уэйта','manara':'Таро Манара','day'
 
 def menu():
     return InlineKeyboardMarkup(inline_keyboard=[
-      [InlineKeyboardButton(text='Таро Уэйта 🔮',callback_data='deck:waite'),InlineKeyboardButton(text='Таро Манара 🍓',callback_data='deck:manara')],
-      [InlineKeyboardButton(text='Карта дня 🧘🏼',callback_data='day')],
-      [InlineKeyboardButton(text='🌌 Транзиты',callback_data='transits')],
-      [InlineKeyboardButton(text='💞 Синастрия',callback_data='synastry')],
-      [InlineKeyboardButton(text='Реферальная программа ❤️',callback_data='friend')],
-      [InlineKeyboardButton(text='Оформить подписку 🌟',callback_data='pay')]])
+      [InlineKeyboardButton(text='Таро Уэйта',callback_data='deck:waite'),InlineKeyboardButton(text='Таро Манара',callback_data='deck:manara')],
+      [InlineKeyboardButton(text='Карта дня',callback_data='day')],
+      [InlineKeyboardButton(text='Транзиты',callback_data='transits'),InlineKeyboardButton(text='Синастрия',callback_data='synastry')],
+      [InlineKeyboardButton(text='Реферальная программа ',callback_data='friend')],
+      [InlineKeyboardButton(text='Оформить подписку ',callback_data='pay')]])
 
 def pay_menu():
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='3 вопроса — 99 рублей',callback_data='pack:3')],[InlineKeyboardButton(text='5 вопросов — 159 рублей',callback_data='pack:5')],[InlineKeyboardButton(text='10 вопросов — 329 рублей',callback_data='pack:10')]])
@@ -111,7 +110,7 @@ def mini_url(deck,mode,choice='manual'):
             f'&choice={urllib.parse.quote(choice)}&v={MINIAPP_VERSION}')
 
 def mini_buttons(deck,mode):
-    manual_text='Получить карту дня' if deck=='day' else 'Получить карты'
+    manual_text='Вытянуть карту дня 🌙' if deck=='day' else 'Вытянуть карты 🌙'
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=manual_text,web_app=WebAppInfo(url=mini_url(deck,mode,'manual')))],
         [InlineKeyboardButton(text='Довериться судьбе ✨',web_app=WebAppInfo(url=mini_url(deck,mode,'fate')))]
@@ -161,7 +160,7 @@ async def day_start(m):
         await subscription(m)
         return
     db.set_pending(m.from_user.id,'day','free','Карта дня')
-    await answer_user(m, 'Начинаем гадание, переходим к карте дня. 🧘🏼',reply_markup=mini_buttons('day','free'))
+    await answer_user(m, 'Давай посмотрим, что ждет тебя сегодня. Ты можешь сам вытянуть карту из колоды или довериться судьбе❤️',reply_markup=mini_buttons('day','free'))
 
 async def deck_start(m,deck):
     mode='premium' if premium_access(m.from_user.id) else 'free'
@@ -231,7 +230,7 @@ async def day_cb(c):
         return
     db.set_pending(uid,'day','free','Карта дня')
     await c.message.answer(
-        'Начинаем гадание, переходим к карте дня. 🧘🏼',
+        'Давай посмотрим, что ждет тебя сегодня. Ты можешь сам вытянуть карту из колоды или довериться судьбе❤️',
         reply_markup=mini_buttons('day','free')
     )
 
@@ -284,9 +283,9 @@ async def text_message(m):
     await send_admin_question(m,deck,m.text)
     if deck=='day':
         db.set_pending(m.from_user.id,'day','free',m.text)
-        await answer_user(m, 'Начинаем гадание, переходим к карте дня. 🧘🏼',reply_markup=mini_buttons('day','free'))
+        await answer_user(m, 'Давай посмотрим, что ждет тебя сегодня. Ты можешь сам вытянуть карту из колоды или довериться судьбе❤️',reply_markup=mini_buttons('day','free'))
     else:
-        await answer_user(m, 'Начинаем гадание, выбирай карты или доверься судьбе ✨',reply_markup=mini_buttons(deck,mode))
+        await answer_user(m, 'Твой вопрос услышан. Сейчас карты покажут то, что важно увидеть именно тебе. Ты можешь сам вытянуть карты из колоды или довериться судьбе✨',reply_markup=mini_buttons(deck,mode))
 
 def match_waite(q):
     norm=' '.join(q.lower().replace('ё','е').split())
@@ -568,7 +567,7 @@ async def _run_transit(uid, payload, calc):
         # Транзиты бесплатные: запросы пользователя не списываются.
         db.event(uid,'transit_calculated',f"{calc['transit_date']}|{calc['city']}")
         print(f'[TRANSITS] START uid={uid} date={calc["transit_date"]} city={calc["city"]}',flush=True)
-        await send_user_message(uid,'Загружаем Вашу натальную карту, делаем расчет...\n\nПожалуйста, подождите, Лилит готовит Ваш персональный прогноз на выбранную дату 🌌')
+        await send_user_message(uid,'Загружаем Вашу натальную карту, делаем расчет...\n\nПожалуйста, подождите, мы готовим Ваш персональный прогноз на выбранную дату 🌌')
         answer=build_transit_interpretation(calc)
         db.event(uid,'transit_local_interpretation','deterministic')
         db.save_transit_reading(
@@ -693,7 +692,7 @@ async def _run_synastry(uid,payload,calc):
     try:
         # Синастрия бесплатная: запросы пользователя не списываются.
         print(f'[SYNASTRY] START uid={uid}',flush=True)
-        await send_user_message(uid,'Собираем две натальные карты и рассчитываем синастрию...\n\nПожалуйста, подождите, Лилит готовит Ваш персональный разбор отношений 💞')
+        await send_user_message(uid,'Собираем две натальные карты и рассчитываем синастрию...\n\nПожалуйста, подождите, мы готовим Ваш персональный разбор отношений 💞')
         db.event(uid,'synastry_calculated',f'{calc["name1"]}|{calc["name2"]}')
         answer=build_synastry_interpretation(calc)
         db.event(uid,'synastry_local_interpretation','deterministic')
