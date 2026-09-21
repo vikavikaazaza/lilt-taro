@@ -350,35 +350,6 @@ def build_synastry_pdf(path: str | Path, answer: str, calc: dict) -> str:
     return _build_pdf(path, "Синастрия", "ЛИЛИТ · персональный разбор отношений", meta, answer)
 
 
-def build_annual_pdf(path: str | Path, answer: str, calc: dict) -> str:
-    """Build the client-facing annual forecast PDF using the existing report design."""
-    name = str(calc.get("name") or "Клиент")
-    year = str(calc.get("year") or "")
-    birth_date = str(calc.get("birth_date") or "")
-    birth_time = str(calc.get("birth_time") or "")
-    city = str(calc.get("city") or "")
-    timezone = str(calc.get("timezone") or "")
-    time_known = bool(calc.get("time_known"))
-
-    meta = [
-        f"{name} · прогноз на {year} год",
-        f"Дата рождения: {birth_date} · {birth_time or 'время неизвестно'}",
-        f"Город рождения: {city}",
-    ]
-    if timezone:
-        meta.append(f"Часовой пояс: {timezone}")
-    if not time_known:
-        meta.append("Время рождения неизвестно: точные выводы по домам и Асценденту не используются.")
-
-    return _build_pdf(
-        path,
-        f"Прогноз на {year} год",
-        "ЛИЛИТ · персональный годовой прогноз",
-        meta,
-        answer,
-    )
-
-
 def build_transit_pdf(path: str | Path, answer: str, calc: dict) -> str:
     date = str(calc.get("transit_date") or "")
     city = str(calc.get("city") or "")
