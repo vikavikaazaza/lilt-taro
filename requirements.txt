@@ -9,4 +9,5 @@ pysweph==2.10.3.6
 timezonefinder==9.0.0
 tzdata==2026.4
 reportlab==4.4.9
+fontpkg-noto-sans==2.15
 
