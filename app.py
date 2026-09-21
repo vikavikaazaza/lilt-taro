@@ -93,6 +93,7 @@ def menu():
       [InlineKeyboardButton(text='Реферальная программа',callback_data='friend')],
       [InlineKeyboardButton(text='Оформить подписку',callback_data='pay')]])
 
+
 def pay_menu():
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='3 вопроса — 99 рублей',callback_data='pack:3')],[InlineKeyboardButton(text='5 вопросов — 159 рублей',callback_data='pack:5')],[InlineKeyboardButton(text='10 вопросов — 329 рублей',callback_data='pack:10')]])
 
@@ -109,7 +110,7 @@ def mini_url(deck,mode,choice='manual'):
             f'&choice={urllib.parse.quote(choice)}&v={MINIAPP_VERSION}')
 
 def mini_buttons(deck,mode):
-    manual_text='Вытянуть карту дня' if deck=='day' else 'Вытянуть карты'
+    manual_text='Получить карту дня' if deck=='day' else 'Получить карты'
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=manual_text,web_app=WebAppInfo(url=mini_url(deck,mode,'manual')))],
         [InlineKeyboardButton(text='Довериться судьбе ✨',web_app=WebAppInfo(url=mini_url(deck,mode,'fate')))]
@@ -678,8 +679,10 @@ async def synastry_preview_api(request:Request):
     if not db.get(uid): raise HTTPException(404,'Пользователь не найден')
     p1,p2=_relation_payload_from_body(body)
     calc=calculate_synastry(p1,p2,p1['name'],p2['name'])
-    aspects=[{'person1_planet':a['person1_planet'],'aspect':a['aspect'],'person2_planet':a['person2_planet'],'orb_text':a['orb_text'],'relationship_weight':a['relationship_weight'],'person1_sign':a['person1_sign'],'person2_sign':a['person2_sign']} for a in calc['aspects']]
-    return {'ok':True,'aspect_count':len(aspects),'aspects':aspects,'angle_aspects':calc['angle_aspects'],'person1_has_houses':p1['time_known'],'person2_has_houses':p2['time_known']}
+    def public_aspects(items):
+        return [{'person1_planet':a['person1_planet'],'aspect':a['aspect'],'person2_planet':a['person2_planet'],'orb_text':a['orb_text'],'relationship_weight':a['relationship_weight'],'person1_sign':a['person1_sign'],'person2_sign':a['person2_sign']} for a in items]
+    groups={k:public_aspects(calc.get(k,[])) for k in ('compatibility_aspects','emotional_aspects','attraction_aspects','conflict_aspects','perspective_aspects')}
+    return {'ok':True,'aspect_count':len(calc['aspects']),'aspects':public_aspects(calc['aspects']),'angle_aspects':calc['angle_aspects'],'person1_has_houses':p1['time_known'],'person2_has_houses':p2['time_known'],**groups}
 
 async def _run_synastry(uid,payload,calc):
     try:
