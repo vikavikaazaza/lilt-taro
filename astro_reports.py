@@ -1090,9 +1090,10 @@ def build_synastry_compatibility_summary(calc: dict[str, Any]) -> dict[str, str]
             'communication': 'Важные договорённости лучше проговаривать прямо, не рассчитывая на догадки.',
             'conflict': 'Главное — разбирать конкретную причину ссоры и не переносить на неё старые обиды.',
         }
-    cats = {'emotion': [], 'love': [], 'conflict': [], 'other': []}
+    cats = {'emotion': [], 'love': [], 'communication': [], 'conflict': [], 'other': []}
     for a in aspects:
-        cats[_syn_aspect_category(a)].append(a)
+        category = _syn_aspect_category(a)
+        cats.setdefault(category, []).append(a)
     n1, n2 = _name(calc, 1), _name(calc, 2)
     strong = sum(1 for a in aspects if _orb(a) <= 2)
     hard = sum(1 for a in aspects if _hard(a))
