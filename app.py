@@ -689,8 +689,12 @@ async def synastry_preview_api(request:Request):
             'aspect_count':len(calc.get('aspects',[])),
             'selected_count':report.get('selected_count',0),
             'summary':build_synastry_compatibility_summary(calc),
+            'featured_aspects':report.get('featured_aspects',[]),
             'aspects':report.get('selected_aspects',[]),
-            'angle_aspects':calc.get('angle_aspects',[]),
+            'angle_aspects':[{**a,
+                'from_person_name': p1['name'] if int(a.get('from_person',1) or 1)==1 else p2['name'],
+                'to_person_name': p2['name'] if int(a.get('to_person',2) or 2)==2 else p1['name']}
+                for a in calc.get('angle_aspects',[])],
             'person1_has_houses':p1['time_known'],'person2_has_houses':p2['time_known']}
 
 @app.post('/api/synastry/calculate')
@@ -717,8 +721,12 @@ async def synastry_calculate_api(request:Request):
             'aspect_count':len(calc.get('aspects',[])),
             'selected_count':report.get('selected_count',0),
             'summary':build_synastry_compatibility_summary(calc),
+            'featured_aspects':report.get('featured_aspects',[]),
             'aspects':report.get('selected_aspects',[]),
-            'angle_aspects':calc.get('angle_aspects',[]),
+            'angle_aspects':[{**a,
+                'from_person_name': p1['name'] if int(a.get('from_person',1) or 1)==1 else p2['name'],
+                'to_person_name': p2['name'] if int(a.get('to_person',2) or 2)==2 else p1['name']}
+                for a in calc.get('angle_aspects',[])],
             'overlays_1_in_2':calc.get('overlays_1_in_2',[]),
             'overlays_2_in_1':calc.get('overlays_2_in_1',[]),
             'person1_has_houses':p1['time_known'],'person2_has_houses':p2['time_known'],
