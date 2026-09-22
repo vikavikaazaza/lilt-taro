@@ -210,11 +210,20 @@ input[type="time"]{
     overflow-wrap:anywhere;
 }
 
-.aspect small{
-    display:block;
-    color:#8f879f;
-    margin-top:3px;
-}
+.aspect small{display:block;color:#8f879f;margin-top:3px;}
+
+.aspect-openable{padding:0;overflow:hidden;}
+.aspect-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 14px;cursor:pointer;list-style:none;}
+.aspect-summary::-webkit-details-marker{display:none;}
+.aspect-title{font-weight:700;line-height:1.35;}
+.aspect-short{font-size:13px;color:#aaa2bc;line-height:1.45;margin-top:5px;}
+.chevron{font-size:20px;color:#ead9b6;transition:transform .2s ease;flex:0 0 auto;}
+details[open] .chevron{transform:rotate(180deg);}
+.aspect-detail{border-top:1px solid #292440;padding:13px 14px 15px;}
+.detail-block{margin-top:12px;}
+.detail-block:first-child{margin-top:0;}
+.detail-label{font-size:13px;font-weight:700;color:#ead9b6;margin-bottom:4px;}
+.detail-text{font-size:14px;color:#eee8df;line-height:1.58;}
 
 .submit{
     width:100%;
@@ -390,7 +399,8 @@ input[type="time"]{
 </div>
 
 <div class="card preview-box">
-    <div class="section-title">Синастрические аспекты</div>
+    <div class="section-title">Все аспекты вашей пары</div>
+    <div class="hint">Нажми на любой аспект, чтобы открыть подробную расшифровку.</div>
     <button id="preview" class="secondary" type="button">Показать аспекты</button>
     <div id="aspects" class="aspects"></div>
 </div>
@@ -597,37 +607,54 @@ function validate(){
     return true;
 }
 
+function detailBlock(label,text){
+    if(!text)return '';
+    return `<div class="detail-block"><div class="detail-label">${label}</div><div class="detail-text">${text}</div></div>`;
+}
+
+function renderAspect(a){
+    const d=a.detail||{};
+    const el=document.createElement('details');
+    el.className='aspect aspect-openable';
+
+    const summary=document.createElement('summary');
+    summary.className='aspect-summary';
+    summary.innerHTML=`<div><div class="aspect-title">${a.person1_planet} ${a.aspect} ${a.person2_planet}</div><div class="aspect-short">${d.short||''}</div></div><span class="chevron">⌄</span>`;
+    el.appendChild(summary);
+
+    const body=document.createElement('div');
+    body.className='aspect-detail';
+    body.innerHTML=
+        detailBlock('Что это значит',d.what)+
+        detailBlock('Как это проявляется между вами',d.between)+
+        detailBlock('Сильная сторона',d.strength)+
+        detailBlock('Где может быть сложно',d.problem)+
+        detailBlock('В обычной жизни',d.life)+
+        detailBlock('Что поможет',d.advice);
+    el.appendChild(body);
+    return el;
+}
+
 function render(data){
     const box=document.getElementById('aspects');
     box.innerHTML='';
 
-    if(!(data.aspects||[]).length){
+    const items=[...(data.aspects||[])];
+
+    if(!items.length && !(data.angle_aspects||[]).length){
         box.innerHTML='<div class="aspect">Значимых межпланетных аспектов не найдено.</div>';
         return;
     }
 
-    for(const a of data.aspects){
-        const el=document.createElement('div');
-        el.className='aspect';
-        el.textContent=`${a.person1_planet} ${a.aspect} ${a.person2_planet}`;
-
-        const sm=document.createElement('small');
-        sm.textContent=`${a.person1_sign} · ${a.person2_sign} · орб ${a.orb_text} · ${a.relationship_weight}`;
-
-        el.appendChild(sm);
-        box.appendChild(el);
-    }
+    items.forEach(a=>box.appendChild(renderAspect(a)));
 
     for(const a of data.angle_aspects||[]){
-        const el=document.createElement('div');
-        el.className='aspect';
-        el.textContent=`Углы: человек ${a.from_person} ${a.planet} ${a.aspect} ${a.point} человека ${a.to_person}`;
-
-        const sm=document.createElement('small');
-        sm.textContent=`орб ${a.orb_text}`;
-
-        el.appendChild(sm);
-        box.appendChild(el);
+        const copy={
+            ...a,
+            person1_planet:a.from_person===1?a.planet:a.point,
+            person2_planet:a.from_person===1?a.point:a.planet,
+        };
+        box.appendChild(renderAspect(copy));
     }
 }
 
