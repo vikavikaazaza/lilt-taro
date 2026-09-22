@@ -753,7 +753,7 @@ HOUSE_MEANINGS={
 }
 
 def _house_interpretation(h:int, planets:list[str], planet_owner:str, house_owner:str)->str:
-    owner_gen=_case(planet_owner,'gen'); target_gen=_case(house_owner,'gen')
+    owner_gen=_case(planet_owner,'gen'); owner_dat=_case(planet_owner,'dat'); target_gen=_case(house_owner,'gen'); target_dat=_case(house_owner,'dat')
     planets=list(dict.fromkeys(planets))
     pg=', '.join(planets)
     if h==3:
@@ -809,7 +809,7 @@ def _house_interpretation(h:int, planets:list[str], planet_owner:str, house_owne
         parts.append('Лучше заранее договориться, кто за что платит и какой вклад каждый считает справедливым.')
         return ' '.join(parts)
     if h==5 and 'Уран' in planets:
-        return f'Уран {owner_gen} делает романтическую часть связи неожиданной: {target} может одновременно сильнее тянуться к {planet_owner} и нуждаться в свободе и новизне. Здесь хорошо работают совместные впечатления, которые не превращаются в обязательный сценарий.'
+        return f'Уран {owner_gen} делает романтическую часть связи неожиданной: {target_dat} может одновременно сильнее тянуться к {owner_dat} и нуждаться в свободе и новизне. Здесь хорошо работают совместные впечатления, которые не превращаются в обязательный сценарий.'
     if h==7 and 'Марс' in planets:
         return f'Марс {owner_gen} сильно включает у {target_gen} тему партнёрства: притяжение может быть быстрым, но вместе с ним возникает спор о том, кто решает и как должны строиться отношения. Важно заранее разделять инициативу и контроль.'
     if h==12 and 'Плутон' in planets:
