@@ -230,13 +230,16 @@ input[type="time"]{
 .aspect-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 14px;cursor:pointer;list-style:none;}
 .aspect-summary::-webkit-details-marker{display:none;}
 .aspect-title{font-weight:700;line-height:1.35;}
-.aspect-short{font-size:13px;color:#aaa2bc;line-height:1.45;margin-top:5px;}
+.aspect-short{font-size:13px;color:#eee8df;line-height:1.45;margin-top:5px;}
+.aspect-why{font-size:12px;color:#8f879f;line-height:1.4;margin-top:6px;}
+.aspect-meta{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px;}
+.pill{display:inline-flex;align-items:center;border:1px solid #3a315a;border-radius:999px;padding:3px 8px;font-size:11px;color:#cfc5b6;background:#15132a;}
 .chevron{font-size:20px;color:#ead9b6;transition:transform .2s ease;flex:0 0 auto;}
 details[open] .chevron{transform:rotate(180deg);}
 .aspect-detail{border-top:1px solid #292440;padding:13px 14px 15px;}
 .detail-block{margin-top:12px;}
 .detail-block:first-child{margin-top:0;}
-.detail-label{font-size:13px;font-weight:700;color:#ead9b6;margin-bottom:4px;}
+.detail-label{font-size:12px;font-weight:700;color:#ead9b6;margin-bottom:4px;text-transform:uppercase;letter-spacing:.03em;}
 .detail-text{font-size:14px;color:#eee8df;line-height:1.58;}
 
 .submit{
@@ -413,19 +416,15 @@ details[open] .chevron{transform:rotate(180deg);}
 </div>
 
 <div class="card preview-box">
-    <div class="section-title">Все аспекты вашей пары</div>
-    <div class="hint">Нажми на любой аспект, чтобы открыть подробную расшифровку.</div>
-    <button id="preview" class="secondary" type="button">Рассчитать и показать все аспекты</button>
-    <div id="aspects" class="aspects"></div>
-</div>
-
-<div class="card">
-    <button id="submit" class="submit" type="button">Сохранить расчёт</button>
+    <div class="section-title">Узнать, что происходит между вами</div>
+    <div class="hint">Сначала увидите общую картину пары. Ниже — отдельные связи. В каждой карточке сразу написано, зачем она важна.</div>
+    <button id="submit" class="submit" type="button">Посмотреть совместимость</button>
     <div id="status" class="status"></div>
     <div class="hint">
-        Синастрия бесплатна — запросы с баланса не списываются.
+        Расчёт происходит прямо здесь. Ничего дополнительно получать в Telegram не нужно.
         Если время рождения неизвестно, дома и углы соответствующего человека не используются.
     </div>
+    <div id="aspects" class="aspects"></div>
     <div class="bottom-note">Поиск города: © OpenStreetMap contributors</div>
 </div>
 
@@ -633,18 +632,22 @@ function renderAspect(a){
 
     const summary=document.createElement('summary');
     summary.className='aspect-summary';
-    summary.innerHTML=`<div><div class="aspect-title">${a.person1_planet} ${a.aspect} ${a.person2_planet}</div><div class="aspect-short">${d.short||''}</div></div><span class="chevron">⌄</span>`;
+    summary.innerHTML=`<div style="min-width:0">
+        <div class="aspect-title">${a.person1_planet} ${a.aspect} ${a.person2_planet}</div>
+        <div class="aspect-short">${d.short||''}</div>
+        <div class="aspect-why">${d.why||'Здесь есть отдельная важная тема отношений.'}</div>
+        <div class="aspect-meta">
+            ${d.category?`<span class="pill">${d.category}</span>`:''}
+            ${d.orb_text?`<span class="pill">Связь ${d.orb_text}</span>`:''}
+        </div>
+    </div><span class="chevron">⌄</span>`;
     el.appendChild(summary);
 
     const body=document.createElement('div');
     body.className='aspect-detail';
     body.innerHTML=
-        detailBlock('Что это значит',d.what)+
-        detailBlock('Как это проявляется между вами',d.between)+
-        detailBlock('Сильная сторона',d.strength)+
-        detailBlock('Где может быть сложно',d.problem)+
-        detailBlock('В обычной жизни',d.life)+
-        detailBlock('Что поможет',d.advice);
+        detailBlock('Как это проявляется',d.between)+
+        detailBlock('Что это меняет в отношениях',d.action);
     el.appendChild(body);
     return el;
 }
@@ -686,57 +689,29 @@ function render(data){
         return;
     }
 
+    const heading=document.createElement('div');
+    heading.className='section-title';
+    heading.style.marginTop='18px';
+    heading.textContent=`Связи между планетами · ${uniqueItems.length}`;
+    box.appendChild(heading);
     uniqueItems.forEach(a=>box.appendChild(renderAspect(a)));
 
-    for(const a of data.angle_aspects||[]){
-        const copy={
-            ...a,
-            person1_planet:a.from_person===1?a.planet:a.point,
-            person2_planet:a.from_person===1?a.point:a.planet,
-        };
-        box.appendChild(renderAspect(copy));
-    }
-}
-
-async function preview(){
-    if(!validate())return;
-
-    const btn=document.getElementById('preview');
-
-    btn.disabled=true;
-    btn.textContent='Считаю…';
-
-    try{
-        const r=await fetch('/api/synastry/preview',{
-            method:'POST',
-            headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({
-                initData,
-                person1:getPerson(1),
-                person2:getPerson(2)
-            })
-        });
-
-        const d=await r.json().catch(()=>({}));
-
-        if(!r.ok){
-            throw new Error(d.detail||'Не удалось рассчитать аспекты');
+    if((data.angle_aspects||[]).length){
+        const angleTitle=document.createElement('div');
+        angleTitle.className='section-title';
+        angleTitle.style.marginTop='18px';
+        angleTitle.textContent=`Планеты и точки карты · ${data.angle_aspects.length}`;
+        box.appendChild(angleTitle);
+        for(const a of data.angle_aspects){
+            const copy={
+                ...a,
+                person1_planet:a.from_person===1?a.planet:a.point,
+                person2_planet:a.from_person===1?a.point:a.planet,
+            };
+            box.appendChild(renderAspect(copy));
         }
-
-        render(d);
-        showStatus(`Найдено аспектов: ${d.aspect_count||0}.`);
-
-    }catch(e){
-        console.error(e);
-        showStatus(e.message||'Не удалось рассчитать аспекты.');
-
-    }finally{
-        btn.disabled=false;
-        btn.textContent='Показать аспекты';
     }
 }
-
-document.getElementById('preview').onclick=preview;
 
 document.getElementById('submit').onclick=async()=>{
     if(submitting||!validate())return;
