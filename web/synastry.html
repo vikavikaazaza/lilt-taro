@@ -650,6 +650,7 @@ function renderSections(report){
     const box=document.getElementById('sections');
     box.innerHTML='';
     for(const section of (report?.sections||[])){
+        if(section.id==='summary') continue;
         const wrap=document.createElement('div');
         wrap.className='reading-section';
         const items=section.items||[];
@@ -691,7 +692,7 @@ function render(data){
         const note=document.createElement('div');
         note.className='hint';
         note.style.margin='0 0 10px';
-        note.textContent=`Система нашла ${data.aspect_count||aspects.length} аспектов и отобрала ${data.selected_count||aspects.length} наиболее значимых. Каждый найденный аспект доступен отдельно, чтобы один и тот же смысл не повторялся много раз.`;
+        note.textContent=`Система нашла ${data.aspect_count||aspects.length} аспектов. Все они показаны отдельно и отсортированы по силе связи; внутри каждого — конкретная трактовка именно этой пары.`;
         box.appendChild(note);
         const list=document.createElement('div');
         list.innerHTML=aspects.map((a,i)=>aspectHtml(a,i)).join('');
