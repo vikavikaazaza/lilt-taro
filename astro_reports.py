@@ -849,16 +849,6 @@ def _pair_technical(a: dict[str, Any], n1: str, n2: str) -> str:
     )
 
 
-def synastry_pdf_sections(calc: dict[str, Any]) -> list[tuple[str, list[str]]]:
-    n1, n2 = _name(calc, 1), _name(calc, 2)
-    aspects = sorted(list(calc.get('aspects', [])), key=_aspect_sort_key)
-    sections = [(title, [body]) for title, body in _syn_narrative(calc)]
-    sections.append(
-        ('Техническая таблица аспектов',
-         [_pair_technical(a, n1, n2) for a in aspects] or ['Значимых аспектов в заданных орбисах не найдено.'])
-    )
-    return sections
-
 
 # ============================================================
 # ТРАНЗИТЫ
