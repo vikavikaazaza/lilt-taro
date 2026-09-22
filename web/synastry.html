@@ -414,7 +414,7 @@ input[type="time"]{
 <div class="card preview-box">
     <div class="section-title">Ваш разбор отношений</div>
     <div id="summary" class="reading-summary" hidden></div>
-    <div id="sections"></div>
+    <div id="sections"></div><div id="method" class="reading-section" hidden></div>
 </div>
 
 <div class="card preview-box">
@@ -665,6 +665,16 @@ function renderSections(report){
     }
 }
 
+function renderMethod(method, timeKnown1, timeKnown2){
+    const box=document.getElementById('method');
+    if(!box)return;
+    const houses=method?.house_system||'Плацидус';
+    const rect=method?.rectification ? 'ректификация использовалась' : 'ректификация не выполняется';
+    const timeNote=(!timeKnown1||!timeKnown2) ? ' Для человека с неизвестным временем рождения дома и углы карты не используются.' : '';
+    box.innerHTML=`<div class="reading-section-title">⚙️ Как считался разбор</div><div class="reading-section-text">Дома: ${esc(houses)}. ${esc(rect)}. Орбисы для планет различаются, поэтому точные связи получают больший вес. В полном списке остаются и более широкие аспекты, но в верхнюю часть разбора они не попадают.${esc(timeNote)}</div>`;
+    box.hidden=false;
+}
+
 function aspectHtml(a,index){
     const d=a.detail||a||{};
     const title=d.title || `${a.person1_planet||''} — ${a.aspect||''} — ${a.person2_planet||''}`;
@@ -690,6 +700,7 @@ function aspectWord(n){
 function render(data){
     renderSummary(data.summary);
     renderSections(data.report||{});
+    renderMethod(data.report?.method||{}, data.person1_has_houses, data.person2_has_houses);
     const box=document.getElementById('aspects');
     box.innerHTML='';
     const aspects=data.aspects||[];
@@ -717,7 +728,9 @@ function render(data){
             const el=document.createElement('div');
             el.className='angle-card';
             el.style.marginTop='8px';
-            el.innerHTML=`<div class="aspect-title">${esc(a.planet||'')} — ${esc(a.aspect||'')} — ${esc(a.point||'')}</div><div class="aspect-meta">${esc(a.from_person||'')} → ${esc(a.to_person||'')}${a.orb_text?` · орб ${esc(a.orb_text)}`:''}</div>`;
+            const fromName=a.from_person_name||a.from_person||'';
+            const toName=a.to_person_name||a.to_person||'';
+            el.innerHTML=`<div class="aspect-title">${esc(a.planet||'')} ${esc(fromName)} — ${esc(a.aspect||'').toLowerCase()} — ${esc(a.point||'')} ${esc(toName)}</div><div class="aspect-meta">${esc(fromName)} → ${esc(toName)}${a.orb_text?` · орб ${esc(a.orb_text)}`:''}</div>`;
             box.appendChild(el);
         }
     }
