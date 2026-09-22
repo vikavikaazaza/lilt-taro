@@ -194,18 +194,26 @@ def score_topics(calc: dict[str, Any]) -> dict[str, float]:
 
 
 def select_aspects(calc: dict[str, Any], limit: int | None = None) -> list[dict[str, Any]]:
+    # Показываем каждый рассчитанный аспект. Ничего не отбрасываем только
+    # потому, что для конкретной пары пока нет отдельного правила.
     aspects=[]
-    seen=set()
-    for a in calc.get('aspects',[]):
-        if _pair(a) not in PAIR_RULES: continue
-        x=dict(a); x['rule_weight']=round(aspect_weight(a),2); x['aspect_tone']=ASPECT_TONE.get(str(a.get('aspect','')), '')
-        key=(_pair(a), str(a.get('aspect','')))
-        # Keep the most precise instance if duplicate pair/aspect occurs.
-        if key in seen: continue
-        seen.add(key); aspects.append(x)
-    aspects.sort(key=lambda a:(-float(a.get('rule_weight',0)), _orb(a)))
+    for idx, a in enumerate(calc.get('aspects',[])):
+        x=dict(a)
+        x['_source_index']=idx
+        x['rule_weight']=round(aspect_weight(a),2)
+        x['aspect_tone']=ASPECT_TONE.get(str(a.get('aspect','')), '')
+        aspects.append(x)
+    aspects.sort(key=lambda a:(-float(a.get('rule_weight',0)), _orb(a), int(a.get('_source_index',0))))
     return aspects if limit is None else aspects[:limit]
 
+
+def _sign_context(a: dict[str, Any], n1: str, n2: str) -> str:
+    p1=str(a.get('person1_planet','')); p2=str(a.get('person2_planet',''))
+    s1=str(a.get('person1_sign','')); s2=str(a.get('person2_sign',''))
+    t1=SIGN_THEMES.get(s1); t2=SIGN_THEMES.get(s2)
+    if not t1 or not t2: return ''
+    c1=_case(n1,'gen'); c2=_case(n2,'gen')
+    return f'{p1} {c1} здесь связан с темой {t1}, а {p2} {c2} — с темой {t2}; это заметно в том, как вы реагируете друг на друга.'
 
 def _aspect_sentences(a: dict[str, Any], n1: str, n2: str) -> tuple[str, str, str, str]:
     """Четыре коротких поля: смысл, проявление, пример, совет.
@@ -469,6 +477,7 @@ def _aspect_sentences(a: dict[str, Any], n1: str, n2: str) -> tuple[str, str, st
                 'Обсуждайте конкретную ситуацию и ожидания, а не делайте выводы о намерениях партнёра.')
 
     meaning, manifestation, example, advice = base
+    sign_context=_sign_context(a,n1,n2)
     if asp == 'Квадрат':
         manifestation += ' Здесь различия заметнее, поэтому один и тот же поступок вы можете оценивать по-разному.'
     elif asp == 'Оппозиция':
@@ -479,6 +488,8 @@ def _aspect_sentences(a: dict[str, Any], n1: str, n2: str) -> tuple[str, str, st
         manifestation += ' Связь раскрывается сильнее, когда вы сами её используете: разговариваете, встречаетесь и договариваетесь.'
     elif asp == 'Соединение':
         manifestation += ' Тема ощущается ярко и быстро включается в обычных ситуациях.'
+    if sign_context:
+        manifestation += ' ' + sign_context
 
     return meaning, manifestation, example, advice
 
@@ -506,13 +517,15 @@ def _detail(a: dict[str, Any], n1: str, n2: str, used_topics: set[str]|None=None
 def _section_summary(details: list[dict[str, Any]], topic: str, fallback: str) -> str:
     ds=[d for d in details if d.get('topic')==topic]
     if not ds: return fallback
-    # Только 2–3 разных факта, без копирования карточек аспектов.
-    texts=[]
-    for d in ds:
-        t=str(d.get('what_it_gives','')).strip()
-        if t and t not in texts: texts.append(t)
-    return ' '.join(texts[:3])
-
+    labels=list(dict.fromkeys(str(d.get('topic_label','')).strip() for d in ds if d.get('topic_label')))
+    lead={
+      'attraction':'Здесь важны симпатия, интерес и то, как вы показываете друг другу ценность.',
+      'emotions':'Эмоциональная реакция заметна: многое зависит от ощущения безопасности и ответа на настроение партнёра.',
+      'communication':'Слова здесь не нейтральны: разговор может быстро сближать, объяснять ситуацию или запускать спор.',
+      'long_term':'Для устойчивости важны не только чувства, но и реальные решения: статус, деньги, сроки и ответственность.',
+      'conflicts':'Сложные места возникают там, где ваши темп, ожидания или способы принимать решения расходятся.',
+    }.get(topic,fallback)
+    return lead + ((' Особенно заметны темы: ' + ', '.join(labels[:3]) + '.') if labels else '')
 
 def build_sections(calc: dict[str, Any]) -> list[dict[str, Any]]:
     n1,n2=str(calc.get('name1') or 'Человек 1'),str(calc.get('name2') or 'Человек 2')
@@ -544,7 +557,7 @@ def build_sections(calc: dict[str, Any]) -> list[dict[str, Any]]:
     for topic,title,prefix,_ in groups:
         ds=[d for d in details if d.get('topic')==topic]
         text=_section_summary(details,topic,prefix)
-        sections.append({'id':topic,'title':title,'text':text,'items':ds[:5]})
+        sections.append({'id':topic,'title':title,'text':text,'items':[]})
 
     passion=[]
     for d in details:
@@ -552,7 +565,7 @@ def build_sections(calc: dict[str, Any]) -> list[dict[str, Any]]:
         if any(x in pair for x in ('Венера —','Марс —')) and d.get('topic') in {'attraction','conflicts'}:
             passion.append(d)
     passion_text='Сильнее всего эта тема проявляется через физическое притяжение, инициативу и личные границы.' if passion else 'Отдельной яркой темы страсти среди выбранных связей не выделено.'
-    sections.append({'id':'passion','title':'🔥 Страсть и интимная динамика','text':passion_text,'items':passion[:5]})
+    sections.append({'id':'passion','title':'🔥 Страсть и интимная динамика','text':passion_text,'items':[]})
 
     # Бытовой контекст домов показываем один раз, а не внутри каждого аспекта.
     practical=[]
@@ -589,7 +602,7 @@ def build_report(calc: dict[str, Any]) -> dict[str, Any]:
       'scores':{k:round(v,1) for k,v in scores.items()},
       'selected_aspects':details,
       'sections':build_sections(calc),
-      'method':{'orb_factor':'1°=1.0; 2°=0.9; 3°=0.75; 4°=0.5; 5–6°=0.25','max_aspects':24},
+      'method':{'orb_factor':'1°=1.0; 2°=0.9; 3°=0.75; 4°=0.5; 5–6°=0.25','max_aspects':'all'},
     }
 
 
