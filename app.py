@@ -15,7 +15,7 @@ import uvicorn
 import config, db
 from chad import ask
 from synastry import calculate_synastry
-from astro_reports import build_synastry_interpretation, build_synastry_aspect_detail
+from astro_reports import build_synastry_interpretation, build_synastry_aspect_detail, build_synastry_compatibility_summary
 
 BASE=Path(__file__).resolve().parent
 
@@ -528,6 +528,7 @@ def _synastry_public_payload(calc, p1, p2):
         'angle_aspects': angle_aspects,
         'person1_has_houses': bool(p1.get('time_known')),
         'person2_has_houses': bool(p2.get('time_known')),
+        'compatibility_summary': build_synastry_compatibility_summary(calc),
     }
 
 @app.post('/api/synastry/preview')
