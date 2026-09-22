@@ -732,3 +732,9 @@ def emotional(aspects: list[dict[str, Any]]) -> list[dict[str, Any]]:
         or _is_pair(a, 'Луна', 'Марс')
         or _is_pair(a, 'Солнце', 'Луна')
     ]
+
+
+def build_synastry_rule_report(calc: dict[str, Any]) -> dict[str, Any]:
+    """Build the structured rule-based synastry report used by the Mini App."""
+    from synastry_engine import build_report
+    return build_report(calc)
