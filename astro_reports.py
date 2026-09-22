@@ -474,12 +474,10 @@ def build_synastry_aspect_detail(a: dict[str, Any], name1: str = '', name2: str 
 
 
 def build_synastry_compatibility_summary(calc: dict[str, Any]) -> dict[str, Any]:
-    """Короткое, конкретное вступление для Mini App без общих шаблонных фраз."""
-    aspects = list(calc.get('aspects') or [])
-    n1, n2 = str(calc.get('name1') or 'Первый человек'), str(calc.get('name2') or 'Второй человек')
-    hard = [a for a in aspects if _hard(a)]
-    soft = [a for a in aspects if not _hard(a)]
-    pairs = [_pair_key(a) for a in aspects]
+    """Вступление к разбору: живое описание пары без перечисления имён в каждом абзаце."""
+    aspects=list(calc.get('aspects') or [])
+    hard=[a for a in aspects if _hard(a)]
+    pairs=[_pair_key(a) for a in aspects]
     themes=[]
     if any('Луна' in p for p in pairs): themes.append('эмоциональная связь')
     if any('Венера' in p or ('Солнце' in p and 'Венера' in p) for p in pairs): themes.append('симпатия и притяжение')
@@ -489,33 +487,29 @@ def build_synastry_compatibility_summary(calc: dict[str, Any]) -> dict[str, Any]
 
     facts=[]
     if any(_is_pair(a,'Меркурий','Марс') for a in aspects):
-        facts.append('Разговоры могут быть очень быстрыми: легко подхватить мысль друг друга, но спор тоже может вспыхнуть за несколько минут.')
+        facts.append('Вы быстро подхватываете мысли друг друга, поэтому разговоры могут одновременно сближать и за несколько минут превращаться в спор.')
     if any(_is_pair(a,'Луна','Луна') for a in aspects):
-        facts.append('Эмоциональные привычки во многом похожи, поэтому вам легче понять настроение друг друга без длинных объяснений.')
+        facts.append('Эмоциональные привычки во многом похожи, поэтому настроение друг друга легче считывать без длинных объяснений.')
     if any(_is_pair(a,'Венера','Марс') or _is_pair(a,'Солнце','Венера') for a in aspects):
-        facts.append('Есть заметная симпатия и физический интерес: желание встречаться и получать внимание друг от друга здесь выражено.')
+        facts.append('Симпатия здесь проявляется не только в словах: важны встречи, внимание, прикосновения и желание проводить время вместе.')
     if any(_is_pair(a,'Сатурн','Венера') or _is_pair(a,'Солнце','Сатурн') for a in aspects):
-        facts.append('Отношения затрагивают серьёзные темы: статус, обязательства, деньги и планы на будущее.')
+        facts.append('Отношения затрагивают серьёзные темы — статус, обязательства, деньги и планы на будущее.')
     if any(_is_pair(a,'Луна','Уран') or _is_pair(a,'Марс','Уран') for a in aspects):
-        facts.append('Одновременно есть тема свободы: одному может хотеться больше близости, а другому — больше пространства для себя.')
+        facts.append('Вам одновременно нужна близость и свобода: давление или попытка контролировать каждый шаг быстро усиливают напряжение.')
 
-    lead = f'У {_name_case(n1, "gen")} и {_name_case(n2, "gen")} заметны ' + ', '.join(themes[:4]) + '.' if themes else f'У {_name_case(n1, "gen")} и {_name_case(n2, "gen")} нет одной темы, которая полностью описывает эту связь.'
+    if themes:
+        lead='В ваших отношениях заметны ' + ', '.join(themes[:4]) + '.'
+    else:
+        lead='В этой связи нет одной темы, которая объясняет всё; важнее сочетание нескольких разных динамик.'
     if facts:
         body=' '.join(facts[:3])
-    elif hard and soft:
-        body='Есть и поддерживающие, и напряжённые связи, поэтому особенно важны разговоры о том, что каждый чувствует и чего ждёт.'
     elif hard:
         body='Самые чувствительные места связаны с разницей в реакциях и необходимостью заранее договариваться о границах.'
     else:
         body='Большая часть заметных связей помогает поддерживать контакт и находить общий язык.'
-    return {
-        'title':'Общая картина',
-        'text':lead+' '+body,
-        'themes':themes,
-        'aspect_count':len(aspects),
-        'strong_aspects':len([a for a in aspects if float(a.get('orb',99) or 99)<=2]),
-        'names':{'person1':n1,'person2':n2}
-    }
+    return {'title':'Общая картина','text':lead+' '+body,'themes':themes,
+            'aspect_count':len(aspects),'strong_aspects':len([a for a in aspects if float(a.get('orb',99) or 99)<=2]),
+            'names':{'person1':str(calc.get('name1') or 'Первый человек'),'person2':str(calc.get('name2') or 'Второй человек')}}
 
 def build_synastry_interpretation(calc: dict[str, Any]) -> str:
     return '\n\n'.join(title + '\n' + body for title, body in _syn_narrative(calc))
