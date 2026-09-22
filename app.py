@@ -15,7 +15,7 @@ import uvicorn
 import config, db
 from chad import ask
 from synastry import calculate_synastry
-from astro_reports import build_synastry_interpretation
+from astro_reports import build_synastry_interpretation, build_synastry_aspect_detail
 
 BASE=Path(__file__).resolve().parent
 
@@ -488,68 +488,96 @@ async def synastry_profile_api(request:Request):
     def p(name,bdate,btime,tknown,city,lat,lon,tz): return {'name':name or '','birth_date':bdate,'birth_time':btime or '','time_known':bool(tknown),'city':city,'lat':float(lat),'lon':float(lon),'timezone':tz}
     return {'profile':{'person1':p(row['name1'],row['birth_date1'],row['birth_time1'],row['time_known1'],row['city1'],row['latitude1'],row['longitude1'],row['timezone1']), 'person2':p(row['name2'],row['birth_date2'],row['birth_time2'],row['time_known2'],row['city2'],row['latitude2'],row['longitude2'],row['timezone2'])}}
 
-@app.post('/api/synastry/preview')
-async def synastry_preview_api(request:Request):
-    body=await request.json(); tg=validate_init_data(body.get('initData',''))
-    if not tg: raise HTTPException(403,'Недействительный Telegram initData')
-    uid=int(tg['id'])
-    if not db.get(uid): raise HTTPException(404,'Пользователь не найден')
-    p1,p2=_relation_payload_from_body(body)
-    calc=calculate_synastry(p1,p2,p1['name'],p2['name'])
+def _synastry_public_payload(calc, p1, p2):
     def public_aspect(a):
-        detail=build_synastry_aspect_detail(a, calc)
+        detail = build_synastry_aspect_detail(a, calc)
         return {
-            'person1_planet':a['person1_planet'],
-            'aspect':a['aspect'],
-            'person2_planet':a['person2_planet'],
-            'orb_text':a['orb_text'],
-            'relationship_weight':a.get('relationship_weight',''),
-            'person1_sign':a['person1_sign'],
-            'person2_sign':a['person2_sign'],
-            'detail':detail,
+            'person1_planet': a['person1_planet'],
+            'aspect': a['aspect'],
+            'person2_planet': a['person2_planet'],
+            'orb_text': a.get('orb_text', ''),
+            'relationship_weight': a.get('relationship_weight', ''),
+            'person1_sign': a.get('person1_sign', ''),
+            'person2_sign': a.get('person2_sign', ''),
+            'detail': detail,
         }
-    def public_aspects(items):
-        return [public_aspect(a) for a in items]
-    groups={k:public_aspects(calc.get(k,[])) for k in ('compatibility_aspects','emotional_aspects','attraction_aspects','conflict_aspects','perspective_aspects')}
-    angle=[]
-    for a in calc.get('angle_aspects',[]):
-        angle.append({**a,'detail':build_synastry_aspect_detail({
-            'person1_planet':a.get('planet') if a.get('from_person')==1 else a.get('point'),
-            'person2_planet':a.get('point') if a.get('from_person')==1 else a.get('planet'),
-            'aspect':a.get('aspect',''),
-        },calc)})
-    return {'ok':True,'aspect_count':len(calc['aspects']),'aspects':public_aspects(calc['aspects']),'angle_aspects':angle,'person1_has_houses':p1['time_known'],'person2_has_houses':p2['time_known'],**groups}
 
-async def _run_synastry(uid,payload,calc):
-    try:
-        # Синастрия бесплатная: запросы пользователя не списываются.
-        print(f'[SYNASTRY] START uid={uid}',flush=True)
-        await send_user_message(uid,'Собираем две натальные карты и рассчитываем синастрию...\n\nПожалуйста, подождите, Лилит готовит Ваш персональный разбор отношений 💞')
-        db.event(uid,'synastry_calculated',f'{calc["name1"]}|{calc["name2"]}')
-        answer=build_synastry_interpretation(calc)
-        db.event(uid,'synastry_local_interpretation','deterministic')
-        db.save_synastry_reading(uid,calc['name1'],calc['name2'],json.dumps(payload,ensure_ascii=False),json.dumps(calc,ensure_ascii=False),answer)
-        # PDF полностью отключён: результат синастрии читается в Mini App.
-        await send_user_message(uid,'Синастрия рассчитана 💞\n\nОткрой Mini App «Синастрия», чтобы посмотреть все аспекты и подробную расшифровку каждого из них.')
-        user_now=db.get(uid); left=(int(user_now['requests'])+int(user_now['paid_requests'])) if user_now else 0
-        await send_user_message(uid,f'Ваше количество запросов: {left}\n\nЕсли хочешь посмотреть другую пару — снова открой «Синастрия» 💞')
-        print(f'[SYNASTRY] DONE uid={uid}',flush=True)
-    except Exception as e:
-        print(f'[SYNASTRY] ERROR uid={uid}: {type(e).__name__}: {e}',flush=True)
-        try: await send_user_message(uid,'Не удалось завершить синастрию. Попробуй ещё раз немного позже.')
-        except Exception as inner: print(f'[SYNASTRY] RECOVERY ERROR uid={uid}: {type(inner).__name__}: {inner}',flush=True)
+    aspects = [public_aspect(a) for a in calc.get('aspects', [])]
+    angle_aspects = []
+    for a in calc.get('angle_aspects', []):
+        # Углы не являются обычными планетарными аспектами, но тоже
+        # показываются в Mini App отдельными карточками.
+        planet = a.get('planet', '')
+        point = a.get('point', '')
+        if a.get('from_person') == 1:
+            pa, pb = planet, point
+        else:
+            pa, pb = point, planet
+        detail_input = {
+            'person1_planet': pa,
+            'person2_planet': pb,
+            'aspect': a.get('aspect', ''),
+        }
+        detail = build_synastry_aspect_detail(detail_input, calc)
+        angle_aspects.append({**a, 'detail': detail})
 
+    return {
+        'ok': True,
+        'aspect_count': len(aspects),
+        'aspects': aspects,
+        'angle_aspects': angle_aspects,
+        'person1_has_houses': bool(p1.get('time_known')),
+        'person2_has_houses': bool(p2.get('time_known')),
+    }
+
+@app.post('/api/synastry/preview')
+async def synastry_preview_api(request: Request):
+    body = await request.json()
+    tg = validate_init_data(body.get('initData', ''))
+    if not tg:
+        raise HTTPException(403, 'Недействительный Telegram initData')
+    uid = int(tg['id'])
+    if not db.get(uid):
+        raise HTTPException(404, 'Пользователь не найден')
+
+    p1, p2 = _relation_payload_from_body(body)
+    calc = calculate_synastry(p1, p2, p1['name'], p2['name'])
+    return _synastry_public_payload(calc, p1, p2)
 
 @app.post('/api/synastry/calculate')
-async def synastry_calculate_api(request:Request):
-    body=await request.json(); tg=validate_init_data(body.get('initData',''))
-    if not tg: raise HTTPException(403,'Недействительный Telegram initData')
-    uid=int(tg['id'])
-    if not db.get(uid): raise HTTPException(404,'Пользователь не найден')
-    p1,p2=_relation_payload_from_body(body); calc=calculate_synastry(p1,p2,p1['name'],p2['name'])
-    db.save_synastry_profile(uid,p1['name'],p1,p2['name'],p2); payload=_relation_input_json(p1,p2)
-    task=asyncio.create_task(_run_synastry(uid,payload,calc)); RELATION_TASKS.add(task); task.add_done_callback(RELATION_TASKS.discard)
-    return {'ok':True,'accepted':True,'message':'Синастрия запущена'}
+async def synastry_calculate_api(request: Request):
+    """Рассчитать синастрию и сразу вернуть результат в Mini App.
+
+    После открытия Mini App Telegram больше не используется для выдачи результата:
+    никаких сообщений пользователю и никаких закрытий Mini App.
+    """
+    body = await request.json()
+    tg = validate_init_data(body.get('initData', ''))
+    if not tg:
+        raise HTTPException(403, 'Недействительный Telegram initData')
+    uid = int(tg['id'])
+    if not db.get(uid):
+        raise HTTPException(404, 'Пользователь не найден')
+
+    p1, p2 = _relation_payload_from_body(body)
+    calc = calculate_synastry(p1, p2, p1['name'], p2['name'])
+    payload = _relation_input_json(p1, p2)
+
+    # Сохраняем результат для истории/админки, но ничего не отправляем в Telegram.
+    db.save_synastry_profile(uid, p1['name'], p1, p2['name'], p2)
+    answer = build_synastry_interpretation(calc)
+    db.event(uid, 'synastry_calculated', f'{calc["name1"]}|{calc["name2"]}')
+    db.event(uid, 'synastry_local_interpretation', 'deterministic')
+    db.save_synastry_reading(
+        uid,
+        calc['name1'],
+        calc['name2'],
+        json.dumps(payload, ensure_ascii=False),
+        json.dumps(calc, ensure_ascii=False),
+        answer,
+    )
+
+    return _synastry_public_payload(calc, p1, p2)
 
 @app.get('/api/miniapp/config')
 async def mini_config(deck:str='waite'):
