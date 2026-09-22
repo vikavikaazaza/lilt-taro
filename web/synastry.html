@@ -188,6 +188,20 @@ input[type="time"]{
     margin-top:16px;
 }
 
+.compatibility-card{
+    margin-top:14px;
+    border:1px solid #3a315a;
+    background:#15132a;
+    border-radius:16px;
+    padding:15px;
+}
+.compatibility-headline{font-size:18px;font-weight:700;line-height:1.35;margin-bottom:8px;}
+.compatibility-lead{font-size:14px;color:#eee8df;line-height:1.58;margin-bottom:12px;}
+.compatibility-grid{display:grid;gap:9px;}
+.compatibility-item{border-top:1px solid #292440;padding-top:9px;}
+.compatibility-label{font-size:12px;font-weight:700;color:#ead9b6;margin-bottom:3px;}
+.compatibility-text{font-size:14px;color:#d9d2c8;line-height:1.55;}
+
 .section-title{
     font-size:16px;
     font-weight:700;
@@ -639,14 +653,40 @@ function render(data){
     const box=document.getElementById('aspects');
     box.innerHTML='';
 
-    const items=[...(data.aspects||[])];
+    const summary=data.compatibility_summary||{};
+    if(summary.headline){
+        const card=document.createElement('div');
+        card.className='compatibility-card';
+        card.innerHTML=
+            `<div class="compatibility-headline">${summary.headline}</div>`+
+            `<div class="compatibility-lead">${summary.text||''}</div>`+
+            `<div class="compatibility-grid">`+
+            `<div class="compatibility-item"><div class="compatibility-label">Эмоции</div><div class="compatibility-text">${summary.emotion||''}</div></div>`+
+            `<div class="compatibility-item"><div class="compatibility-label">Любовь и притяжение</div><div class="compatibility-text">${summary.love||''}</div></div>`+
+            `<div class="compatibility-item"><div class="compatibility-label">Общение</div><div class="compatibility-text">${summary.communication||''}</div></div>`+
+            `<div class="compatibility-item"><div class="compatibility-label">Конфликты</div><div class="compatibility-text">${summary.conflict||''}</div></div>`+
+            `</div>`;
+        box.appendChild(card);
+    }
 
-    if(!items.length && !(data.angle_aspects||[]).length){
-        box.innerHTML='<div class="aspect">Значимых межпланетных аспектов не найдено.</div>';
+    const items=[...(data.aspects||[])];
+    const seen=new Set();
+    const uniqueItems=items.filter(a=>{
+        const key=`${a.person1_planet}|${a.aspect}|${a.person2_planet}`;
+        if(seen.has(key))return false;
+        seen.add(key);
+        return true;
+    });
+
+    if(!uniqueItems.length && !(data.angle_aspects||[]).length){
+        const empty=document.createElement('div');
+        empty.className='aspect';
+        empty.textContent='Значимых межпланетных аспектов не найдено.';
+        box.appendChild(empty);
         return;
     }
 
-    items.forEach(a=>box.appendChild(renderAspect(a)));
+    uniqueItems.forEach(a=>box.appendChild(renderAspect(a)));
 
     for(const a of data.angle_aspects||[]){
         const copy={
@@ -725,15 +765,12 @@ document.getElementById('submit').onclick=async()=>{
             throw new Error(d.detail||'Не удалось запустить расчёт');
         }
 
-        showStatus('Расчёт запущен ✨ Вернись в Telegram — Лилит пришлёт разбор.');
+        render(d);
+        showStatus(`Готово. Найдено аспектов: ${d.aspect_count||0}. Все расшифровки доступны здесь.`);
 
         try{
             tg?.HapticFeedback?.impactOccurred?.('medium');
         }catch(e){}
-
-        setTimeout(()=>{
-            try{tg?.close?.();}catch(e){}
-        },900);
 
     }catch(e){
         console.error(e);
