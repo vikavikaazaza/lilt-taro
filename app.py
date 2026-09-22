@@ -14,63 +14,23 @@ import uvicorn
 
 import config, db
 from chad import ask
+from transits import calculate_transits
 from synastry import calculate_synastry
-from astro_reports import build_synastry_interpretation, build_synastry_aspect_detail, build_synastry_compatibility_summary
+from pdf_reports import build_transit_pdf, build_synastry_pdf
+from astro_reports import (build_transit_interpretation, build_synastry_interpretation,
+                           build_synastry_aspect_detail, build_synastry_compatibility_summary, build_synastry_rule_report)
 
 BASE=Path(__file__).resolve().parent
-
 router=Router()
 bot: Bot
 BROADCAST_TASKS=set()
 READING_TASKS=set()
+TRANSIT_TASKS=set()
 RELATION_TASKS=set()
+TRANSIT_MINIAPP_VERSION='1'
 RELATION_MINIAPP_VERSION='1'
 NOMINATIM_LOCK=asyncio.Lock()
 NOMINATIM_LAST=0.0
-
-
-async def _geocode_city(query: str, limit: int = 5):
-    """Search cities for the Mini App using OpenStreetMap Nominatim."""
-    global NOMINATIM_LAST
-    q = str(query or '').strip()
-    if len(q) < 2:
-        return []
-    async with NOMINATIM_LOCK:
-        loop = asyncio.get_running_loop()
-        wait = 1.05 - (loop.time() - NOMINATIM_LAST)
-        if wait > 0:
-            await asyncio.sleep(wait)
-        params = {
-            'q': q,
-            'format': 'jsonv2',
-            'limit': str(max(1, min(int(limit), 5))),
-            'addressdetails': '1',
-            'accept-language': 'ru',
-        }
-        headers = {'User-Agent': 'LilitTaroBot/1.0 (synastry mini app)'}
-        timeout = aiohttp.ClientTimeout(total=12, connect=8, sock_connect=8, sock_read=10)
-        try:
-            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
-                async with session.get('https://nominatim.openstreetmap.org/search', params=params) as resp:
-                    NOMINATIM_LAST = loop.time()
-                    if resp.status >= 400:
-                        raise RuntimeError(f'geocoder HTTP {resp.status}')
-                    data = await resp.json(content_type=None)
-        except Exception as exc:
-            print(f'[GEOCODE] error: {type(exc).__name__}: {exc}', flush=True)
-            return []
-    out = []
-    for item in data if isinstance(data, list) else []:
-        try:
-            out.append({
-                'display_name': str(item.get('display_name') or q),
-                'lat': float(item['lat']),
-                'lon': float(item['lon']),
-            })
-        except Exception:
-            continue
-    return out
-
 
 class DialogueMiddleware(BaseMiddleware):
     async def __call__(self, handler, event, data):
@@ -129,11 +89,11 @@ DECK_NAMES={'waite':'Таро Уэйта','manara':'Таро Манара','day'
 
 def menu():
     return InlineKeyboardMarkup(inline_keyboard=[
-      [InlineKeyboardButton(text='Таро Уэйта 🔮',callback_data='deck:waite'),InlineKeyboardButton(text='Таро Манара 🍓',callback_data='deck:manara')],
-      [InlineKeyboardButton(text='Карта дня 🧘🏼',callback_data='day')],
-      [InlineKeyboardButton(text='💞 Синастрия',callback_data='synastry')],
-      [InlineKeyboardButton(text='Реферальная программа ❤️',callback_data='friend')],
-      [InlineKeyboardButton(text='Оформить подписку 🌟',callback_data='pay')]])
+      [InlineKeyboardButton(text='Таро Уэйта',callback_data='deck:waite'),InlineKeyboardButton(text='Таро Манара',callback_data='deck:manara')],
+      [InlineKeyboardButton(text='Карта дня',callback_data='day')],
+      [InlineKeyboardButton(text='Транзиты',callback_data='transits'),InlineKeyboardButton(text='Синастрия',callback_data='synastry')],
+      [InlineKeyboardButton(text='Реферальная программа ',callback_data='friend')],
+      [InlineKeyboardButton(text='Оформить подписку ',callback_data='pay')]])
 
 def pay_menu():
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='3 вопроса — 99 рублей',callback_data='pack:3')],[InlineKeyboardButton(text='5 вопросов — 159 рублей',callback_data='pack:5')],[InlineKeyboardButton(text='10 вопросов — 329 рублей',callback_data='pack:10')]])
@@ -151,11 +111,22 @@ def mini_url(deck,mode,choice='manual'):
             f'&choice={urllib.parse.quote(choice)}&v={MINIAPP_VERSION}')
 
 def mini_buttons(deck,mode):
-    manual_text='Получить карту дня' if deck=='day' else 'Получить карты'
+    manual_text='Вытянуть карту дня 🌙' if deck=='day' else 'Вытянуть карты 🌙'
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=manual_text,web_app=WebAppInfo(url=mini_url(deck,mode,'manual')))],
         [InlineKeyboardButton(text='Довериться судьбе ✨',web_app=WebAppInfo(url=mini_url(deck,mode,'fate')))]
     ])
+
+def transit_mini_button():
+    if not bot_url().startswith('https://'):
+        raise RuntimeError('PUBLIC_BASE_URL должен начинаться с https://')
+    url=f'{bot_url()}/transits?v={TRANSIT_MINIAPP_VERSION}'
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='Открыть расчёт транзитов 🌌',web_app=WebAppInfo(url=url))]])
+
+async def transit_start(m, uid=None):
+    uid=int(uid or m.from_user.id)
+    await answer_user(m, 'Посмотрим, какие темы и влияния могут быть активны для тебя в выбранную дату 🌌\n\nВведи данные рождения и дату, на которую хочешь сделать расчёт.', reply_markup=transit_mini_button())
+
 
 def relation_mini_button():
     if not bot_url().startswith('https://'):
@@ -190,7 +161,7 @@ async def day_start(m):
         await subscription(m)
         return
     db.set_pending(m.from_user.id,'day','free','Карта дня')
-    await answer_user(m, 'Начинаем гадание, переходим к карте дня. 🧘🏼',reply_markup=mini_buttons('day','free'))
+    await answer_user(m, 'Давай посмотрим, что ждет тебя сегодня. Ты можешь сам вытянуть карту из колоды или довериться судьбе❤️',reply_markup=mini_buttons('day','free'))
 
 async def deck_start(m,deck):
     mode='premium' if premium_access(m.from_user.id) else 'free'
@@ -228,6 +199,8 @@ async def magic(m): await deck_start(m,'waite')
 async def manara(m): await deck_start(m,'manara')
 @router.message(Command('day'))
 async def day_cmd(m): await day_start(m)
+@router.message(Command('transits'))
+async def transits_cmd(m): await transit_start(m)
 
 @router.message(Command('synastry'))
 async def synastry_cmd(m): await synastry_start(m)
@@ -258,9 +231,14 @@ async def day_cb(c):
         return
     db.set_pending(uid,'day','free','Карта дня')
     await c.message.answer(
-        'Начинаем гадание, переходим к карте дня. 🧘🏼',
+        'Давай посмотрим, что ждет тебя сегодня. Ты можешь сам вытянуть карту из колоды или довериться судьбе❤️',
         reply_markup=mini_buttons('day','free')
     )
+
+@router.callback_query(F.data=='transits')
+async def transits_cb(c):
+    await c.answer()
+    await transit_start(c.message, c.from_user.id)
 
 @router.callback_query(F.data=='synastry')
 async def synastry_cb(c):
@@ -306,9 +284,9 @@ async def text_message(m):
     await send_admin_question(m,deck,m.text)
     if deck=='day':
         db.set_pending(m.from_user.id,'day','free',m.text)
-        await answer_user(m, 'Начинаем гадание, переходим к карте дня. 🧘🏼',reply_markup=mini_buttons('day','free'))
+        await answer_user(m, 'Давай посмотрим, что ждет тебя сегодня. Ты можешь сам вытянуть карту из колоды или довериться судьбе❤️',reply_markup=mini_buttons('day','free'))
     else:
-        await answer_user(m, 'Начинаем гадание, выбирай карты или доверься судьбе ✨',reply_markup=mini_buttons(deck,mode))
+        await answer_user(m, 'Твой вопрос услышан. Сейчас карты покажут то, что важно увидеть именно тебе. Ты можешь сам вытянуть карты из колоды или довериться судьбе✨',reply_markup=mini_buttons(deck,mode))
 
 def match_waite(q):
     norm=' '.join(q.lower().replace('ё','е').split())
@@ -429,6 +407,220 @@ async def miniapp():
         headers={'Cache-Control':'no-store, no-cache, must-revalidate, max-age=0'}
     )
 
+@app.get('/transits',response_class=HTMLResponse)
+async def transits_miniapp():
+    return FileResponse(
+        BASE/'web'/'transits.html',
+        headers={'Cache-Control':'no-store, no-cache, must-revalidate, max-age=0'}
+    )
+
+async def _geocode_city(query: str, limit: int = 5):
+    global NOMINATIM_LAST
+    q=str(query or '').strip()
+    if len(q) < 2:
+        return []
+    async with NOMINATIM_LOCK:
+        loop=asyncio.get_running_loop()
+        wait=1.05-(loop.time()-NOMINATIM_LAST)
+        if wait>0:
+            await asyncio.sleep(wait)
+        params={'q':q,'format':'jsonv2','limit':str(max(1,min(limit,5))),'addressdetails':'1','accept-language':'ru'}
+        headers={'User-Agent':'LilitTaroBot/1.0 (transits mini app)'}
+        timeout=aiohttp.ClientTimeout(total=12,connect=8,sock_connect=8,sock_read=10)
+        try:
+            async with aiohttp.ClientSession(timeout=timeout,headers=headers) as session:
+                async with session.get('https://nominatim.openstreetmap.org/search',params=params) as resp:
+                    NOMINATIM_LAST=loop.time()
+                    if resp.status>=400:
+                        raise RuntimeError(f'geocoder HTTP {resp.status}')
+                    data=await resp.json(content_type=None)
+        except Exception as exc:
+            print(f'[GEOCODE] error: {type(exc).__name__}: {exc}',flush=True)
+            return []
+    out=[]
+    for item in data if isinstance(data,list) else []:
+        try:
+            out.append({
+                'display_name':str(item.get('display_name') or q),
+                'lat':float(item['lat']),
+                'lon':float(item['lon']),
+            })
+        except Exception:
+            continue
+    return out
+
+@app.get('/api/transits/cities')
+async def transit_cities(q:str=''):
+    return {'cities':await _geocode_city(q,5)}
+
+def _validate_transit_payload(body):
+    try:
+        birth_date=dt_date.fromisoformat(str(body.get('birth_date','')).strip())
+    except Exception as exc:
+        raise HTTPException(400,'Некорректная дата рождения') from exc
+    try:
+        transit_date=dt_date.fromisoformat(str(body.get('transit_date','')).strip())
+    except Exception as exc:
+        raise HTTPException(400,'Некорректная дата транзита') from exc
+    if not (1900 <= birth_date.year <= 2200 and 1900 <= transit_date.year <= 2200):
+        raise HTTPException(400,'Дата должна быть в диапазоне 1900–2200')
+    raw_time=str(body.get('birth_time') or '').strip()
+    time_known=bool(body.get('time_known',bool(raw_time)))
+    birth_time=None
+    if time_known:
+        try:
+            birth_time=dt_time.fromisoformat(raw_time)
+        except Exception as exc:
+            raise HTTPException(400,'Некорректное время рождения') from exc
+    city=str(body.get('city') or '').strip()
+    if len(city)<2:
+        raise HTTPException(400,'Укажите город рождения')
+    try:
+        lat=float(body.get('lat')); lon=float(body.get('lon'))
+    except Exception as exc:
+        raise HTTPException(400,'Выберите город из списка') from exc
+    if not (-90<=lat<=90 and -180<=lon<=180):
+        raise HTTPException(400,'Некорректные координаты города')
+    try:
+        from timezonefinder import timezone_at
+        tz_name=timezone_at(lng=lon,lat=lat)
+    except Exception as exc:
+        raise HTTPException(500,'Не удалось определить часовой пояс города') from exc
+    if not tz_name:
+        raise HTTPException(400,'Не удалось определить часовой пояс города')
+    try:
+        ZoneInfo(tz_name)
+    except ZoneInfoNotFoundError as exc:
+        raise HTTPException(400,'Неизвестный часовой пояс города') from exc
+    return birth_date,birth_time,time_known,transit_date,city,lat,lon,tz_name
+
+@app.get('/api/transits/profile')
+async def transit_profile_api(request:Request):
+    tg=validate_init_data(request.query_params.get('initData',''))
+    if not tg: raise HTTPException(403,'Недействительный Telegram initData')
+    uid=int(tg['id'])
+    row=db.transit_profile(uid)
+    if not row: return {'profile':None}
+    return {'profile':{
+        'birth_date':row['birth_date'],'birth_time':row['birth_time'] or '',
+        'time_known':bool(row['time_known']),'city':row['city'],'lat':float(row['latitude']),
+        'lon':float(row['longitude']),'timezone':row['timezone']
+    }}
+
+@app.post('/api/transits/preview')
+async def transit_preview_api(request:Request):
+    body=await request.json()
+    tg=validate_init_data(body.get('initData',''))
+    if not tg: raise HTTPException(403,'Недействительный Telegram initData')
+    uid=int(tg['id'])
+    if not db.get(uid): raise HTTPException(404,'Пользователь не найден')
+    birth_date,birth_time,time_known,transit_date,city,lat,lon,tz_name=_validate_transit_payload(body)
+    try:
+        calc=calculate_transits(birth_date,birth_time,transit_date,lat,lon,tz_name,city)
+    except ValueError as exc:
+        raise HTTPException(400,str(exc)) from exc
+    except Exception as exc:
+        print(f'[TRANSITS] PREVIEW ERROR uid={uid}: {type(exc).__name__}: {exc}',flush=True)
+        raise HTTPException(500,'Не удалось рассчитать аспекты') from exc
+    aspects=[]
+    for a in calc.get('aspects',[]):
+        aspects.append({
+            'transit_planet':a['transit_planet'],
+            'aspect':a['aspect'],
+            'natal_planet':a['natal_planet'],
+            'orb_text':a['orb_text'],
+            'state':a['state'],
+            'house':a.get('house'),
+            'transit_sign':a.get('transit_sign'),
+            'transit_position':a.get('transit_position'),
+            'transit_retrograde':bool(a.get('transit_retrograde')),
+        })
+    return {
+        'ok':True,
+        'transit_date':calc['transit_date'],
+        'city':calc['city'],
+        'time_known':bool(calc['time_known']),
+        'ascendant_sign':calc.get('ascendant_sign'),
+        'aspects':aspects,
+    }
+
+
+
+REPORT_DIR = BASE / 'generated_reports'
+
+def _report_path(uid: int, kind: str, suffix: str = 'pdf') -> Path:
+    REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    token = secrets.token_hex(6)
+    safe_kind = re.sub(r'[^a-zA-Z0-9_-]+', '_', str(kind)).strip('_') or 'report'
+    return REPORT_DIR / f'{safe_kind}_{uid}_{token}.{suffix}'
+
+async def _send_pdf_report(uid: int, pdf_path: Path, caption: str, answer: str) -> None:
+    # Keep the full answer in the admin dialogue/history without sending it
+    # as a plain Telegram message to the client.
+    try:
+        db.log_message(int(uid), 'bot', answer, 'pdf')
+    except Exception as exc:
+        print(f'[PDF] dialogue log error uid={uid}: {type(exc).__name__}: {exc}', flush=True)
+    await bot.send_document(int(uid), FSInputFile(pdf_path), caption=caption)
+
+async def _run_transit(uid, payload, calc):
+    try:
+        # Транзиты бесплатные: запросы пользователя не списываются.
+        db.event(uid,'transit_calculated',f"{calc['transit_date']}|{calc['city']}")
+        print(f'[TRANSITS] START uid={uid} date={calc["transit_date"]} city={calc["city"]}',flush=True)
+        await send_user_message(uid,'Загружаем Вашу натальную карту, делаем расчет...\n\nПожалуйста, подождите, мы готовим Ваш персональный прогноз на выбранную дату 🌌')
+        answer=build_transit_interpretation(calc)
+        db.event(uid,'transit_local_interpretation','deterministic')
+        db.save_transit_reading(
+            uid,calc['transit_date'],calc['city'],json.dumps(payload,ensure_ascii=False),
+            json.dumps(calc,ensure_ascii=False),answer
+        )
+        pdf_path=_report_path(uid,'transits')
+        try:
+            build_transit_pdf(pdf_path, answer, calc)
+            await _send_pdf_report(
+                uid, pdf_path,
+                'Ваш персональный прогноз по транзитам готов 🌌\n\nПолный разбор - в PDF-файле.',
+                answer
+            )
+        finally:
+            pdf_path.unlink(missing_ok=True)
+        user_now=db.get(uid)
+        left=(int(user_now['requests'])+int(user_now['paid_requests'])) if user_now else 0
+        await send_user_message(uid,f'Ваше количество запросов: {left}\n\nЕсли хочешь посмотреть другую дату — снова открой «Транзиты» 🌌')
+        print(f'[TRANSITS] DONE uid={uid} date={calc["transit_date"]}',flush=True)
+    except Exception as e:
+        print(f'[TRANSITS] ERROR uid={uid}: {type(e).__name__}: {e}',flush=True)
+        try:
+            await send_user_message(uid,'Не удалось завершить расчёт транзитов. Попробуй ещё раз немного позже.')
+        except Exception as inner:
+            print(f'[TRANSITS] RECOVERY ERROR uid={uid}: {type(inner).__name__}: {inner}',flush=True)
+
+
+@app.post('/api/transits/calculate')
+async def transit_calculate_api(request:Request):
+    body=await request.json()
+    tg=validate_init_data(body.get('initData',''))
+    if not tg: raise HTTPException(403,'Недействительный Telegram initData')
+    uid=int(tg['id'])
+    if not db.get(uid): raise HTTPException(404,'Пользователь не найден')
+    birth_date,birth_time,time_known,transit_date,city,lat,lon,tz_name=_validate_transit_payload(body)
+    try:
+        calc=calculate_transits(birth_date,birth_time,transit_date,lat,lon,tz_name,city)
+    except ValueError as exc:
+        raise HTTPException(400,str(exc)) from exc
+    except Exception as exc:
+        print(f'[TRANSITS] CALC ERROR uid={uid}: {type(exc).__name__}: {exc}',flush=True)
+        raise HTTPException(500,'Не удалось рассчитать транзиты') from exc
+    db.save_transit_profile(uid,birth_date.isoformat(),birth_time.strftime('%H:%M') if birth_time else None,time_known,city,lat,lon,tz_name)
+    payload={
+        'birth_date':birth_date.isoformat(),'birth_time':birth_time.strftime('%H:%M') if birth_time else '',
+        'time_known':time_known,'transit_date':transit_date.isoformat(),'city':city,'lat':lat,'lon':lon,'timezone':tz_name
+    }
+    # Calculation is deterministic and completes locally; the Mini App is released immediately after validation.
+    task=asyncio.create_task(_run_transit(uid,payload,calc)); TRANSIT_TASKS.add(task); task.add_done_callback(TRANSIT_TASKS.discard)
+    return {'ok':True,'accepted':True,'message':'Расчёт запущен'}
+
 def _validate_relation_person(person, label):
     if not isinstance(person, dict):
         raise HTTPException(400, f'Не заполнены данные: {label}')
@@ -475,10 +667,6 @@ async def synastry_miniapp():
     return FileResponse(BASE/'web'/'synastry.html',headers={'Cache-Control':'no-store, no-cache, must-revalidate, max-age=0'})
 
 
-@app.get('/api/transits/cities')
-async def transit_cities(q: str = ''):
-    return {'cities': await _geocode_city(q, 5)}
-
 @app.get('/api/synastry/profile')
 async def synastry_profile_api(request:Request):
     tg=validate_init_data(request.query_params.get('initData',''))
@@ -488,97 +676,53 @@ async def synastry_profile_api(request:Request):
     def p(name,bdate,btime,tknown,city,lat,lon,tz): return {'name':name or '','birth_date':bdate,'birth_time':btime or '','time_known':bool(tknown),'city':city,'lat':float(lat),'lon':float(lon),'timezone':tz}
     return {'profile':{'person1':p(row['name1'],row['birth_date1'],row['birth_time1'],row['time_known1'],row['city1'],row['latitude1'],row['longitude1'],row['timezone1']), 'person2':p(row['name2'],row['birth_date2'],row['birth_time2'],row['time_known2'],row['city2'],row['latitude2'],row['longitude2'],row['timezone2'])}}
 
-def _synastry_public_payload(calc, p1, p2):
-    def public_aspect(a):
-        detail = build_synastry_aspect_detail(a, calc)
-        return {
-            'person1_planet': a['person1_planet'],
-            'aspect': a['aspect'],
-            'person2_planet': a['person2_planet'],
-            'orb_text': a.get('orb_text', ''),
-            'relationship_weight': a.get('relationship_weight', ''),
-            'person1_sign': a.get('person1_sign', ''),
-            'person2_sign': a.get('person2_sign', ''),
-            'detail': detail,
-        }
-
-    aspects = [public_aspect(a) for a in calc.get('aspects', [])]
-    angle_aspects = []
-    for a in calc.get('angle_aspects', []):
-        # Углы не являются обычными планетарными аспектами, но тоже
-        # показываются в Mini App отдельными карточками.
-        planet = a.get('planet', '')
-        point = a.get('point', '')
-        if a.get('from_person') == 1:
-            pa, pb = planet, point
-        else:
-            pa, pb = point, planet
-        detail_input = {
-            'person1_planet': pa,
-            'person2_planet': pb,
-            'aspect': a.get('aspect', ''),
-        }
-        detail = build_synastry_aspect_detail(detail_input, calc)
-        angle_aspects.append({**a, 'detail': detail})
-
-    return {
-        'ok': True,
-        'aspect_count': len(aspects),
-        'aspects': aspects,
-        'angle_aspects': angle_aspects,
-        'person1_has_houses': bool(p1.get('time_known')),
-        'person2_has_houses': bool(p2.get('time_known')),
-        'compatibility_summary': build_synastry_compatibility_summary(calc),
-    }
-
 @app.post('/api/synastry/preview')
-async def synastry_preview_api(request: Request):
-    body = await request.json()
-    tg = validate_init_data(body.get('initData', ''))
-    if not tg:
-        raise HTTPException(403, 'Недействительный Telegram initData')
-    uid = int(tg['id'])
-    if not db.get(uid):
-        raise HTTPException(404, 'Пользователь не найден')
-
-    p1, p2 = _relation_payload_from_body(body)
-    calc = calculate_synastry(p1, p2, p1['name'], p2['name'])
-    return _synastry_public_payload(calc, p1, p2)
+async def synastry_preview_api(request:Request):
+    body=await request.json(); tg=validate_init_data(body.get('initData',''))
+    if not tg: raise HTTPException(403,'Недействительный Telegram initData')
+    uid=int(tg['id'])
+    if not db.get(uid): raise HTTPException(404,'Пользователь не найден')
+    p1,p2=_relation_payload_from_body(body)
+    calc=calculate_synastry(p1,p2,p1['name'],p2['name'])
+    report=build_synastry_rule_report(calc)
+    return {'ok':True,'report':report,
+            'aspect_count':len(calc.get('aspects',[])),
+            'selected_count':report.get('selected_count',0),
+            'summary':build_synastry_compatibility_summary(calc),
+            'aspects':report.get('selected_aspects',[]),
+            'angle_aspects':calc.get('angle_aspects',[]),
+            'person1_has_houses':p1['time_known'],'person2_has_houses':p2['time_known']}
 
 @app.post('/api/synastry/calculate')
-async def synastry_calculate_api(request: Request):
-    """Рассчитать синастрию и сразу вернуть результат в Mini App.
-
-    После открытия Mini App Telegram больше не используется для выдачи результата:
-    никаких сообщений пользователю и никаких закрытий Mini App.
-    """
-    body = await request.json()
-    tg = validate_init_data(body.get('initData', ''))
-    if not tg:
-        raise HTTPException(403, 'Недействительный Telegram initData')
-    uid = int(tg['id'])
-    if not db.get(uid):
-        raise HTTPException(404, 'Пользователь не найден')
-
-    p1, p2 = _relation_payload_from_body(body)
-    calc = calculate_synastry(p1, p2, p1['name'], p2['name'])
-    payload = _relation_input_json(p1, p2)
-
-    # Сохраняем результат для истории/админки, но ничего не отправляем в Telegram.
-    db.save_synastry_profile(uid, p1['name'], p1, p2['name'], p2)
-    answer = build_synastry_interpretation(calc)
-    db.event(uid, 'synastry_calculated', f'{calc["name1"]}|{calc["name2"]}')
-    db.event(uid, 'synastry_local_interpretation', 'deterministic')
-    db.save_synastry_reading(
-        uid,
-        calc['name1'],
-        calc['name2'],
-        json.dumps(payload, ensure_ascii=False),
-        json.dumps(calc, ensure_ascii=False),
-        answer,
-    )
-
-    return _synastry_public_payload(calc, p1, p2)
+async def synastry_calculate_api(request:Request):
+    body=await request.json(); tg=validate_init_data(body.get('initData',''))
+    if not tg: raise HTTPException(403,'Недействительный Telegram initData')
+    uid=int(tg['id'])
+    if not db.get(uid): raise HTTPException(404,'Пользователь не найден')
+    p1,p2=_relation_payload_from_body(body)
+    calc=calculate_synastry(p1,p2,p1['name'],p2['name'])
+    db.save_synastry_profile(uid,p1['name'],p1,p2['name'],p2)
+    payload=_relation_input_json(p1,p2)
+    report=build_synastry_rule_report(calc)
+    # Сохраняем именно локальный детерминированный разбор. Никаких фоновых задач,
+    # сообщений бота или PDF для синастрии.
+    answer=build_synastry_interpretation(calc)
+    try:
+        db.event(uid,'synastry_calculated',f'{calc["name1"]}|{calc["name2"]}')
+        db.event(uid,'synastry_local_interpretation','rule_based')
+        db.save_synastry_reading(uid,calc['name1'],calc['name2'],json.dumps(payload,ensure_ascii=False),json.dumps(report,ensure_ascii=False),answer)
+    except Exception as exc:
+        print(f'[SYNASTRY] SAVE ERROR uid={uid}: {type(exc).__name__}: {exc}',flush=True)
+    return {'ok':True,'report':report,
+            'aspect_count':len(calc.get('aspects',[])),
+            'selected_count':report.get('selected_count',0),
+            'summary':build_synastry_compatibility_summary(calc),
+            'aspects':report.get('selected_aspects',[]),
+            'angle_aspects':calc.get('angle_aspects',[]),
+            'overlays_1_in_2':calc.get('overlays_1_in_2',[]),
+            'overlays_2_in_1':calc.get('overlays_2_in_1',[]),
+            'person1_has_houses':p1['time_known'],'person2_has_houses':p2['time_known'],
+            'names':{'person1':p1['name'],'person2':p2['name']}}
 
 @app.get('/api/miniapp/config')
 async def mini_config(deck:str='waite'):
@@ -857,6 +1001,7 @@ async def admin_user(request:Request, uid:int):
     readings=db.user_readings(uid)
     payments=db.user_payments(uid)
     events=db.user_events(uid)
+    transit_readings=db.user_transit_readings(uid)
     synastry_readings=db.user_synastry_readings(uid)
     total=int(u['requests'])+int(u['paid_requests'])
     name=html.escape(u['name'] or str(uid))
@@ -881,6 +1026,15 @@ async def admin_user(request:Request, uid:int):
         ans=html.escape(r['answer'] or '')
         reading_rows.append(f'<div class="reading"><div class="meta"><b>{deck}</b> · {dt}</div><div><b>Вопрос:</b> {q}</div><div><b>Карты:</b> {cards}</div><div><b>Ответ:</b><div class="answer">{ans}</div></div></div>')
     readings_html=''.join(reading_rows) if reading_rows else '<p class="muted">Сохранённых раскладов нет.</p>'
+
+    transit_rows=[]
+    for tr in transit_readings:
+        dt=html.escape((tr['created_at'] or '')[:19].replace('T',' '))
+        td=html.escape(tr['transit_date'] or '')
+        city=html.escape(tr['city'] or '')
+        ans=html.escape(tr['answer'] or '')
+        transit_rows.append(f'<div class="reading"><div class="meta"><b>Транзиты</b> · {td} · {city} · {dt}</div><div class="answer">{ans}</div></div>')
+    transit_html=''.join(transit_rows) if transit_rows else '<p class="muted">Расчётов транзитов пока нет.</p>'
 
     syn_rows=[]
     for sr in synastry_readings:
@@ -907,6 +1061,7 @@ async def admin_user(request:Request, uid:int):
 <div class="hero"><h1>{name}</h1><p>{username} · Telegram ID: <b>{uid}</b></p><div class="grid"><div class="stat">Всего запросов<br><b>{total}</b></div><div class="stat">Бесплатные<br><b>{int(u["requests"])}</b></div><div class="stat">Оплаченные<br><b>{int(u["paid_requests"])}</b></div><div class="stat">Ручная подписка<br><b>{manual}</b></div></div><p class="muted">Источник: {html.escape(u["source"] or "telegram")} · Первый вход: {html.escape((u["first_seen"] or "")[:19].replace("T"," "))} · Последний вход: {html.escape((u["last_seen"] or "")[:19].replace("T"," "))}</p></div>
 <section><h2>💬 Диалог с ботом</h2><div class="dialogue">{chat_html}</div></section>
 <section><h2>🔮 История раскладов</h2><p class="muted">История раскладов сохраняется отдельно и включает записи, сделанные до включения полного журнала сообщений.</p>{readings_html}</section>
+<section><h2>🌌 Транзиты</h2>{transit_html}</section>
 <section><h2>💞 Синастрия</h2>{syn_html}</section>
 <section><h2>💳 Платежи</h2><table><tr><th>Дата</th><th>Сумма</th><th>Запросов</th><th>Статус</th></tr>{payments_html}</table></section>
 <section><h2>⚙️ События</h2><table><tr><th>Дата</th><th>Событие</th><th>Данные</th></tr>{events_html}</table></section>
@@ -1046,6 +1201,11 @@ async def main():
         payment_task.cancel()
         try: await payment_task
         except asyncio.CancelledError: pass
+        for task in list(TRANSIT_TASKS):
+            task.cancel()
+        for task in list(TRANSIT_TASKS):
+            try: await task
+            except asyncio.CancelledError: pass
 
         for task in list(RELATION_TASKS):
             task.cancel()
