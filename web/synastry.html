@@ -330,7 +330,7 @@ input[type="time"]{
 .aspect-section{margin-top:13px}
 .aspect-section-title{font-size:12px;color:#d7bb73;margin-bottom:5px;font-weight:700}
 .aspect-section-text{font-size:14px;line-height:1.62;color:#eee5d3;white-space:pre-line}
-.reading-section{border:1px solid #302a52;background:#0d0c1c;border-radius:14px;padding:14px;margin-top:10px}.reading-section-title{font-size:17px;font-weight:700;margin-bottom:8px;color:#eee5d3}.reading-section-text{font-size:14px;line-height:1.65;color:#eee5d3;white-space:pre-line}.reading-section details{margin-top:10px}.angle-card{padding:12px 14px;border:1px solid #302a52;background:#0d0c1c;border-radius:14px}
+.reading-section{border:1px solid #302a52;background:#0d0c1c;border-radius:14px;padding:14px;margin-top:10px}.reading-subsection{margin-top:12px;padding-top:10px;border-top:1px solid #24203f}.reading-subsection-title{font-size:15px;font-weight:700;margin-bottom:6px;color:#eee5d3}.reading-section-title{font-size:17px;font-weight:700;margin-bottom:8px;color:#eee5d3}.reading-section-text{font-size:14px;line-height:1.65;color:#eee5d3;white-space:pre-line}.reading-section details{margin-top:10px}.angle-card{padding:12px 14px;border:1px solid #302a52;background:#0d0c1c;border-radius:14px}
 @media(max-width:600px){.reading-summary{font-size:14px}.aspect-title{font-size:14px}.aspect-section-text{font-size:14px}}
 </style>
 </head>
@@ -419,7 +419,7 @@ input[type="time"]{
 
 <div class="card preview-box">
     <div class="section-title">Все аспекты</div>
-    <div class="hint" style="margin-bottom:10px">Все найденные аспекты показаны ниже. Откройте любой пункт, чтобы увидеть его влияние, пример из жизни и практический совет.</div>
+    <div class="hint" style="margin-bottom:10px">Все найденные межпланетные аспекты показаны ниже. Контакты с углами карты вынесены в отдельный разбор выше. Откройте любой пункт, чтобы увидеть его влияние, пример из жизни и практический совет.</div>
     <div id="aspects" class="aspects"></div>
 </div>
 
@@ -654,6 +654,14 @@ function renderSections(report){
         wrap.className='reading-section';
         const items=section.items||[];
         wrap.innerHTML=`<div class="reading-section-title">${esc(section.title||'Раздел')}</div><div class="reading-section-text">${esc(section.text||'')}</div>`;
+        if(Array.isArray(section.subsections)){
+            for(const sub of section.subsections){
+                const sw=document.createElement('div');
+                sw.className='reading-subsection';
+                sw.innerHTML=`<div class="reading-subsection-title">${esc(sub.title||'')}</div><div class="reading-section-text">${esc(sub.text||'')}</div>`;
+                wrap.appendChild(sw);
+            }
+        }
         if(items.length){
             const list=document.createElement('div');
             list.className='aspects';
@@ -717,23 +725,9 @@ function render(data){
         box.appendChild(list);
     }
 
-    const angles=data.angle_aspects||[];
-    if(angles.length){
-        const title=document.createElement('div');
-        title.className='section-title';
-        title.style.marginTop='16px';
-        title.textContent='Планеты и углы карты';
-        box.appendChild(title);
-        for(const a of angles){
-            const el=document.createElement('div');
-            el.className='angle-card';
-            el.style.marginTop='8px';
-            const fromName=a.from_person_name||a.from_person||'';
-            const toName=a.to_person_name||a.to_person||'';
-            el.innerHTML=`<div class="aspect-title">${esc(a.planet||'')} ${esc(fromName)} — ${esc(a.aspect||'').toLowerCase()} — ${esc(a.point||'')} ${esc(toName)}</div><div class="aspect-meta">${esc(fromName)} → ${esc(toName)}${a.orb_text?` · орб ${esc(a.orb_text)}`:''}</div>`;
-            box.appendChild(el);
-        }
-    }
+    // Контакты с ASC/DSC/MC/IC уже показаны с интерпретацией в разделе
+    // «Влияние на личность и образ партнёра».
+
 }
 
 document.getElementById('submit').onclick=async()=>{
