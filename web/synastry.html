@@ -419,8 +419,7 @@ input[type="time"]{
 
 <div class="card preview-box">
     <div class="section-title">Все аспекты</div>
-    <div class="hint" style="margin-bottom:10px">Каждый пункт можно открыть. Внутри — что именно он даёт вашим отношениям и как это может проявляться в обычной жизни.</div>
-    <button id="preview" class="secondary" type="button">Показать аспекты</button>
+    <div class="hint" style="margin-bottom:10px">Все найденные аспекты показаны ниже. Откройте любой пункт, чтобы увидеть его влияние, пример из жизни и практический совет.</div>
     <div id="aspects" class="aspects"></div>
 </div>
 
@@ -680,6 +679,14 @@ function aspectHtml(a,index){
     return `<details class="aspect-card"><summary><div class="aspect-head"><div><div class="aspect-title">${esc(title)}</div><div class="aspect-topic">${esc(topic)}</div>${meta?`<div class="aspect-meta">${esc(meta)}</div>`:''}</div><div class="aspect-arrow">⌄</div></div></summary><div class="aspect-body">${sections.map(([h,t])=>`<div class="aspect-section"><div class="aspect-section-title">${esc(h)}</div><div class="aspect-section-text">${esc(t)}</div></div>`).join('')}</div></details>`;
 }
 
+function aspectWord(n){
+    n=Number(n)||0;
+    const m10=n%10, m100=n%100;
+    if(m10===1 && m100!==11)return `${n} аспект`;
+    if(m10>=2 && m10<=4 && !(m100>=12 && m100<=14))return `${n} аспекта`;
+    return `${n} аспектов`;
+}
+
 function render(data){
     renderSummary(data.summary);
     renderSections(data.report||{});
@@ -692,7 +699,7 @@ function render(data){
         const note=document.createElement('div');
         note.className='hint';
         note.style.margin='0 0 10px';
-        note.textContent=`Система нашла ${data.aspect_count||aspects.length} аспектов. Все они показаны отдельно и отсортированы по силе связи; внутри каждого — конкретная трактовка именно этой пары.`;
+        note.textContent=`Система нашла ${aspectWord(data.aspect_count||aspects.length)}. Все они показаны отдельно и отсортированы по силе связи.`;
         box.appendChild(note);
         const list=document.createElement('div');
         list.innerHTML=aspects.map((a,i)=>aspectHtml(a,i)).join('');
@@ -715,46 +722,6 @@ function render(data){
         }
     }
 }
-
-async function preview(){
-    if(!validate())return;
-
-    const btn=document.getElementById('preview');
-
-    btn.disabled=true;
-    btn.textContent='Считаю…';
-
-    try{
-        const r=await fetch('/api/synastry/preview',{
-            method:'POST',
-            headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({
-                initData,
-                person1:getPerson(1),
-                person2:getPerson(2)
-            })
-        });
-
-        const d=await r.json().catch(()=>({}));
-
-        if(!r.ok){
-            throw new Error(d.detail||'Не удалось рассчитать аспекты');
-        }
-
-        render(d);
-        showStatus(`Найдено аспектов: ${d.aspect_count||0}.`);
-
-    }catch(e){
-        console.error(e);
-        showStatus(e.message||'Не удалось рассчитать аспекты.');
-
-    }finally{
-        btn.disabled=false;
-        btn.textContent='Показать аспекты';
-    }
-}
-
-document.getElementById('preview').onclick=preview;
 
 document.getElementById('submit').onclick=async()=>{
     if(submitting||!validate())return;
