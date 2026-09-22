@@ -98,10 +98,10 @@ HOUSE_RULES = {
 
 
 SIGN_THEMES = {
- 'Овен':'инициативы, скорости и прямой реакции','Телец':'стабильности, комфорта и материальной опоры','Близнецы':'разговоров, любопытства и смены впечатлений',
+ 'Овен':'инициативы, скорости и прямой реакции','Телец':'стабильности, комфорта и материальной опоры','Близнецы':'разговоры, любопытство и смену впечатлений',
  'Рак':'эмоциональной безопасности, дома и заботы','Лев':'самовыражения, внимания и желания быть замеченным','Дева':'практичности, деталей и порядка',
- 'Весы':'баланса, договорённостей и взаимности','Скорпион':'доверия, глубины и сильной эмоциональной реакции','Стрелец':'свободы, движения и расширения планов',
- 'Козерог':'ответственности, целей и долгосрочных решений','Водолей':'независимости, новых идей и нестандартного формата','Рыбы':'чувствительности, интуиции и впечатлений'
+ 'Весы':'баланса, договорённостей и взаимности','Скорпион':'доверие, глубину и сильную эмоциональную реакцию','Стрелец':'свободу, движение и расширение планов',
+ 'Козерог':'ответственность, цели и долгосрочные решения','Водолей':'независимость, новые идеи и нестандартный формат','Рыбы':'чувствительность, интуицию и впечатления'
 }
 
 SECTION_TITLES = {
@@ -152,13 +152,26 @@ def _name_forms(name: str) -> tuple[str, str]:
       'анна':('Анны','Анной'),'мария':('Марии','Марией'),'виктория':('Виктории','Викторией'),
       'елена':('Елены','Еленой'),'ольга':('Ольги','Ольгой'),'ирина':('Ирины','Ириной'),
       'екатерина':('Екатерины','Екатериной'),'ксения':('Ксении','Ксенией'),'наталья':('Натальи','Натальей'),
-      'татьяна':('Татьяны','Татьяной'),'анастасия':('Анастасии','Анастасией'),'александр':('Александра','Александром'),
-      'андрей':('Андрея','Андреем'),'сергей':('Сергея','Сергеем'),'дмитрий':('Дмитрия','Дмитрием'),
-      'максим':('Максима','Максимом'),'роман':('Романа','Романом'),'никита':('Никиты','Никитой'),
-      'павел':('Павла','Павлом'),'иван':('Ивана','Иваном'),'михаил':('Михаила','Михаилом'),
+      'татьяна':('Татьяны','Татьяной'),'анастасия':('Анастасии','Анастасией'),'дарья':('Дарьи','Дарьей'),
+      'софия':('Софии','Софией'),'полина':('Полины','Полиной'),'светлана':('Светланы','Светланой'),
+      'людмила':('Людмилы','Людмилой'),'юлия':('Юлии','Юлией'),'александра':('Александры','Александрой'),
+      'александр':('Александра','Александром'),'андрей':('Андрея','Андреем'),'сергей':('Сергея','Сергеем'),
+      'дмитрий':('Дмитрия','Дмитрием'),'максим':('Максима','Максимом'),'роман':('Романа','Романом'),
+      'никита':('Никиты','Никитой'),'павел':('Павла','Павлом'),'иван':('Ивана','Иваном'),
+      'михаил':('Михаила','Михаилом'),'алексей':('Алексея','Алексеем'),'евгений':('Евгения','Евгением'),
+      'владимир':('Владимира','Владимиром'),'артём':('Артёма','Артёмом'),'артем':('Артёма','Артёмом'),
+      'денис':('Дениса','Денисом'),'кирилл':('Кирилла','Кириллом'),'илья':('Ильи','Ильёй'),
+      'антон':('Антона','Антоном'),'константин':('Константина','Константином'),'виктор':('Виктора','Виктором'),
+      'марина':('Марины','Мариной'),'наташа':('Наташи','Наташей'),'катя':('Кати','Катей'),
+      'саша':('Саши','Сашей'),'маша':('Маши','Машей'),
     }
     f=forms.get(n.lower())
-    return (f[0] if f else n, f[1] if f else n)
+    if f: return f
+    low=n.lower()
+    if low.endswith(('ия','ья')): return (n[:-1]+'и', n[:-1]+'ей')
+    if low.endswith('а'): return (n[:-1]+'ы', n[:-1]+'ой')
+    if low.endswith('я'): return (n[:-1]+'и', n[:-1]+'ей')
+    return (n,n)
 
 
 def _case(name: str, kind: str) -> str:
@@ -194,26 +207,38 @@ def score_topics(calc: dict[str, Any]) -> dict[str, float]:
 
 
 def select_aspects(calc: dict[str, Any], limit: int | None = None) -> list[dict[str, Any]]:
-    # Показываем каждый рассчитанный аспект. Ничего не отбрасываем только
-    # потому, что для конкретной пары пока нет отдельного правила.
     aspects=[]
-    for idx, a in enumerate(calc.get('aspects',[])):
-        x=dict(a)
-        x['_source_index']=idx
-        x['rule_weight']=round(aspect_weight(a),2)
-        x['aspect_tone']=ASPECT_TONE.get(str(a.get('aspect','')), '')
-        aspects.append(x)
-    aspects.sort(key=lambda a:(-float(a.get('rule_weight',0)), _orb(a), int(a.get('_source_index',0))))
+    seen=set()
+    for a in calc.get('aspects',[]):
+        if _pair(a) not in PAIR_RULES: continue
+        x=dict(a); x['rule_weight']=round(aspect_weight(a),2); x['aspect_tone']=ASPECT_TONE.get(str(a.get('aspect','')), '')
+        key=(_pair(a), str(a.get('aspect','')))
+        # Keep the most precise instance if duplicate pair/aspect occurs.
+        if key in seen: continue
+        seen.add(key); aspects.append(x)
+    aspects.sort(key=lambda a:(-float(a.get('rule_weight',0)), _orb(a)))
     return aspects if limit is None else aspects[:limit]
 
 
-def _sign_context(a: dict[str, Any], n1: str, n2: str) -> str:
-    p1=str(a.get('person1_planet','')); p2=str(a.get('person2_planet',''))
-    s1=str(a.get('person1_sign','')); s2=str(a.get('person2_sign',''))
-    t1=SIGN_THEMES.get(s1); t2=SIGN_THEMES.get(s2)
+SIGN_TRAITS = {
+    'Овен':'инициативу, скорость и прямые решения','Телец':'стабильность, комфорт и практичные решения',
+    'Близнецы':'разговоры, любопытство и смену впечатлений','Рак':'эмоциональную близость, дом и заботу',
+    'Лев':'самовыражение, признание и желание быть замеченным','Дева':'порядок, конкретику и внимание к деталям',
+    'Весы':'партнёрство, договорённости и поиск компромисса','Скорпион':'доверие, глубину и сильную эмоциональную реакцию',
+    'Стрелец':'свободу, движение и расширение планов','Козерог':'ответственность, цели и долгосрочные решения',
+    'Водолей':'независимость, новые идеи и нестандартный формат','Рыбы':'чувствительность, интуицию и впечатления',
+}
+
+def _sign_context(a: dict[str, Any], n1: str, n2: str, asp: str) -> str:
+    s1,s2=str(a.get('person1_sign','')),str(a.get('person2_sign',''))
+    t1,t2=SIGN_TRAITS.get(s1),SIGN_TRAITS.get(s2)
     if not t1 or not t2: return ''
-    c1=_case(n1,'gen'); c2=_case(n2,'gen')
-    return f'{p1} {c1} здесь связан с темой {t1}, а {p2} {c2} — с темой {t2}; это заметно в том, как вы реагируете друг на друга.'
+    c1=' '.join(str(n1 or '').split()).strip(); c2=' '.join(str(n2 or '').split()).strip()
+    if asp=='Квадрат': return f'Разница особенно заметна: для {c1} здесь важны {t1}, для {c2} — {t2}.'
+    if asp=='Оппозиция': return f'{c1} чаще опирается на {t1}, а {c2} — на {t2}; одну ситуацию вы можете видеть по-разному.'
+    if asp in {'Тригон','Секстиль'}: return f'{c1} проявляет эту тему через {t1}, а {c2} — через {t2}; эти способы могут дополнять друг друга.'
+    return f'Для {c1} здесь важны {t1}, для {c2} — {t2}.'
+
 
 def _aspect_sentences(a: dict[str, Any], n1: str, n2: str) -> tuple[str, str, str, str]:
     """Четыре коротких поля: смысл, проявление, пример, совет.
@@ -477,19 +502,19 @@ def _aspect_sentences(a: dict[str, Any], n1: str, n2: str) -> tuple[str, str, st
                 'Обсуждайте конкретную ситуацию и ожидания, а не делайте выводы о намерениях партнёра.')
 
     meaning, manifestation, example, advice = base
-    sign_context=_sign_context(a,n1,n2)
-    if asp == 'Квадрат':
-        manifestation += ' Здесь различия заметнее, поэтому один и тот же поступок вы можете оценивать по-разному.'
-    elif asp == 'Оппозиция':
-        manifestation += ' Здесь особенно важно учитывать разный взгляд на одну и ту же ситуацию.'
-    elif asp == 'Тригон':
-        manifestation += ' Обычно вам проще использовать эту связь без долгих объяснений.'
-    elif asp == 'Секстиль':
-        manifestation += ' Связь раскрывается сильнее, когда вы сами её используете: разговариваете, встречаетесь и договариваетесь.'
-    elif asp == 'Соединение':
-        manifestation += ' Тема ощущается ярко и быстро включается в обычных ситуациях.'
+    sign_context=_sign_context(a,n1,n2,asp)
     if sign_context:
         manifestation += ' ' + sign_context
+    elif asp == 'Квадрат':
+        manifestation += ' Различия здесь заметнее, поэтому лучше сразу проговаривать ожидания.'
+    elif asp == 'Оппозиция':
+        manifestation += ' Одну ситуацию вы можете видеть по-разному, поэтому особенно важны уточнения.'
+    elif asp == 'Тригон':
+        manifestation += ' Здесь многое получается легче, когда вы не мешаете друг другу действовать привычным способом.'
+    elif asp == 'Секстиль':
+        manifestation += ' Связь заметнее всего, когда вы сами используете её в общих делах и разговорах.'
+    elif asp == 'Соединение':
+        manifestation += ' Тема включается быстро и заметно даже в обычных ситуациях.'
 
     return meaning, manifestation, example, advice
 
@@ -517,75 +542,65 @@ def _detail(a: dict[str, Any], n1: str, n2: str, used_topics: set[str]|None=None
 def _section_summary(details: list[dict[str, Any]], topic: str, fallback: str) -> str:
     ds=[d for d in details if d.get('topic')==topic]
     if not ds: return fallback
-    labels=list(dict.fromkeys(str(d.get('topic_label','')).strip() for d in ds if d.get('topic_label')))
-    lead={
-      'attraction':'Здесь важны симпатия, интерес и то, как вы показываете друг другу ценность.',
-      'emotions':'Эмоциональная реакция заметна: многое зависит от ощущения безопасности и ответа на настроение партнёра.',
-      'communication':'Слова здесь не нейтральны: разговор может быстро сближать, объяснять ситуацию или запускать спор.',
-      'long_term':'Для устойчивости важны не только чувства, но и реальные решения: статус, деньги, сроки и ответственность.',
-      'conflicts':'Сложные места возникают там, где ваши темп, ожидания или способы принимать решения расходятся.',
-    }.get(topic,fallback)
-    return lead + ((' Особенно заметны темы: ' + ', '.join(labels[:3]) + '.') if labels else '')
+    # Только 2–3 разных факта, без копирования карточек аспектов.
+    texts=[]
+    for d in ds:
+        t=str(d.get('what_it_gives','')).strip()
+        if t and t not in texts: texts.append(t)
+    return ' '.join(texts[:3])
+
 
 def build_sections(calc: dict[str, Any]) -> list[dict[str, Any]]:
     n1,n2=str(calc.get('name1') or 'Человек 1'),str(calc.get('name2') or 'Человек 2')
     selected=select_aspects(calc)
     details=[_detail(a,n1,n2,calc=calc) for a in selected]
     scores=score_topics(calc)
-    hard=[a for a in selected if str(a.get('aspect','')) in {'Квадрат','Оппозиция'}]
-    soft=[a for a in selected if str(a.get('aspect','')) in {'Тригон','Секстиль'}]
-
     themes=sorted(scores.items(),key=lambda x:-x[1])
     labels={'attraction':'притяжение','emotions':'эмоции','communication':'общение','passion':'страсть','long_term':'долгосрочность','conflicts':'напряжение','freedom':'свобода'}
-    lead='Главные темы: '+', '.join(labels.get(k,k) for k,_ in themes[:3])+'.' if themes else 'Главные темы по этой карте не выделяются одной группой.'
-    if hard and soft:
-        lead+=' В одних вопросах вам легко совпадать, в других различия быстро становятся заметны.'
-    elif hard:
-        lead+=' Основные сложности связаны с разницей в реакции и правилах.'
-    elif soft:
-        lead+=' Большая часть заметных связей поддерживает контакт и совместные действия.'
-
+    lead='Главные темы: '+', '.join(labels.get(k,k) for k,_ in themes[:3])+'.' if themes else 'В этой карте нет одной доминирующей темы.'
+    hard=any(str(a.get('aspect','')) in {'Квадрат','Оппозиция'} for a in selected)
+    soft=any(str(a.get('aspect','')) in {'Тригон','Секстиль'} for a in selected)
+    if hard and soft: lead+=' Есть и поддерживающие связи, и точки, где различия быстро становятся заметны.'
+    elif hard: lead+=' Основные сложности связаны с разницей в реакции, темпе и правилах.'
+    elif soft: lead+=' Большая часть заметных связей помогает поддерживать контакт и совместные действия.'
     sections=[{'id':'summary','title':'❤️ Общая динамика','text':lead,'items':[]}]
-
     groups=[
-      ('attraction','❤️ Притяжение','Здесь важны симпатия, интерес и желание быть рядом.','items'),
-      ('emotions','🌙 Эмоциональная совместимость','Здесь важны чувство безопасности и реакция на поступки друг друга.','items'),
-      ('communication','🧠 Общение','Здесь видно, как слова помогают сближаться или запускают спор.','items'),
-      ('long_term','💍 Долгосрочный потенциал','Здесь важны ответственность, деньги, сроки и общие планы.','items'),
-      ('conflicts','⚡ Конфликты и сложные места','Здесь собраны ситуации, где различия между вами заметнее всего.','items'),
+      ('attraction','❤️ Притяжение','Здесь важны симпатия, интерес, физическое влечение и то, как вы показываете друг другу ценность.'),
+      ('emotions','🌙 Эмоциональная совместимость','Здесь важны чувство безопасности, бытовая забота и реакция на настроение партнёра.'),
+      ('communication','🧠 Общение','Здесь важны способ говорить о чувствах, принятие решений и то, как вы спорите.'),
+      ('long_term','💍 Долгосрочный потенциал','Здесь важны ответственность, деньги, сроки, статус и общие планы.'),
+      ('conflicts','⚡ Конфликты и сложные места','Здесь особенно важны границы, темп, контроль и конкретные договорённости.'),
     ]
-    for topic,title,prefix,_ in groups:
+    for topic,title,base in groups:
         ds=[d for d in details if d.get('topic')==topic]
-        text=_section_summary(details,topic,prefix)
-        sections.append({'id':topic,'title':title,'text':text,'items':[]})
+        if not ds: continue
+        labels_seen=[]
+        for d in ds:
+            label=d.get('topic_label','')
+            if label and label not in labels_seen: labels_seen.append(label)
+        extra=(' Наиболее заметны темы: '+', '.join(labels_seen[:3])+'.') if labels_seen else ''
+        sections.append({'id':topic,'title':title,'text':base+extra,'items':[]})
 
-    passion=[]
-    for d in details:
-        pair=d['title']
-        if any(x in pair for x in ('Венера —','Марс —')) and d.get('topic') in {'attraction','conflicts'}:
-            passion.append(d)
-    passion_text='Сильнее всего эта тема проявляется через физическое притяжение, инициативу и личные границы.' if passion else 'Отдельной яркой темы страсти среди выбранных связей не выделено.'
-    sections.append({'id':'passion','title':'🔥 Страсть и интимная динамика','text':passion_text,'items':[]})
-
-    # Бытовой контекст домов показываем один раз, а не внутри каждого аспекта.
-    practical=[]
+    house_lines=[]
     for bucket in ('overlays_1_in_2','overlays_2_in_1'):
+        grouped=defaultdict(list)
+        who=n2 if bucket=='overlays_1_in_2' else n1
         for x in calc.get(bucket,[]):
-            h=int(x.get('house') or 0); rule=HOUSE_RULES.get(h)
-            if not rule: continue
-            who=n2 if bucket=='overlays_1_in_2' else n1
-            practical.append(f'{x.get("planet","")} {_case(who,"gen")} в {h} доме партнёра: {rule[1]}.')
-    if practical:
-        sections.append({'id':'daily','title':'🏠 Как это проявляется в жизни','text':' '.join(practical[:6]),'items':[]})
+            h=int(x.get('house') or 0)
+            if h in HOUSE_RULES: grouped[h].append(str(x.get('planet','')))
+        for h, planets in sorted(grouped.items()):
+            rule=HOUSE_RULES[h][1]
+            house_lines.append(f'{", ".join(planets)} {_case(who,"gen")} {"попадает" if len(planets)==1 else "попадают"} в {h} дом партнёра: {rule}.')
+    if house_lines:
+        sections.append({'id':'daily','title':'🏠 Как это проявляется в жизни','text':' '.join(house_lines),'items':[]})
 
     final_parts=[]
-    if scores.get('attraction',0)>0: final_parts.append('между вами есть заметное притяжение')
-    if scores.get('emotions',0)>0: final_parts.append('эмоциональная реакция друг на друга выражена')
-    if scores.get('communication',0)>0: final_parts.append('разговоры сильно влияют на отношения')
+    if scores.get('attraction',0)>0: final_parts.append('между вами есть притяжение')
+    if scores.get('emotions',0)>0: final_parts.append('эмоциональная реакция выражена')
+    if scores.get('communication',0)>0: final_parts.append('разговоры заметно влияют на отношения')
     if scores.get('conflicts',0)>0: final_parts.append('в спорных вопросах важны границы и конкретные договорённости')
     if scores.get('long_term',0)>0: final_parts.append('отношения затрагивают реальные планы и ответственность')
     final='В этой связи '+', '.join(final_parts)+'.' if final_parts else 'В этой связи нет одной доминирующей темы.'
-    final+=' Самые полезные точки для обсуждения — время, деньги, статус, личное пространство и ближайшие планы.'
     sections.append({'id':'final','title':'🔮 Итог','text':final,'items':[]})
     return sections
 
