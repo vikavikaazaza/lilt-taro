@@ -15,26 +15,9 @@ import uvicorn
 import config, db
 from chad import ask
 from synastry import calculate_synastry
-from pdf_reports import build_synastry_pdf
 from astro_reports import build_synastry_interpretation
 
 BASE=Path(__file__).resolve().parent
-
-REPORT_DIR = BASE / 'generated_reports'
-
-def _report_path(uid: int, kind: str, suffix: str = 'pdf') -> Path:
-    REPORT_DIR.mkdir(parents=True, exist_ok=True)
-    token = secrets.token_hex(6)
-    safe_kind = re.sub(r'[^a-zA-Z0-9_-]+', '_', str(kind)).strip('_') or 'report'
-    return REPORT_DIR / f'{safe_kind}_{uid}_{token}.{suffix}'
-
-async def _send_pdf_report(uid: int, pdf_path: Path, caption: str, answer: str) -> None:
-    # Сохраняем полный текст в истории диалога и отправляем пользователю PDF.
-    try:
-        db.log_message(int(uid), 'bot', answer, 'report')
-    except Exception as e:
-        print(f'[REPORT] history log error uid={uid}: {type(e).__name__}: {e}', flush=True)
-    await bot.send_document(uid, FSInputFile(pdf_path), caption=caption)
 
 router=Router()
 bot: Bot
@@ -546,16 +529,8 @@ async def _run_synastry(uid,payload,calc):
         answer=build_synastry_interpretation(calc)
         db.event(uid,'synastry_local_interpretation','deterministic')
         db.save_synastry_reading(uid,calc['name1'],calc['name2'],json.dumps(payload,ensure_ascii=False),json.dumps(calc,ensure_ascii=False),answer)
-        pdf_path=_report_path(uid,'synastry')
-        try:
-            build_synastry_pdf(pdf_path, answer, calc)
-            await _send_pdf_report(
-                uid, pdf_path,
-                'Ваш персональный разбор синастрии готов 💞\n\nПолный текст - в PDF-файле.',
-                answer
-            )
-        finally:
-            pdf_path.unlink(missing_ok=True)
+        # PDF полностью отключён: результат синастрии читается в Mini App.
+        await send_user_message(uid,'Синастрия рассчитана 💞\n\nОткрой Mini App «Синастрия», чтобы посмотреть все аспекты и подробную расшифровку каждого из них.')
         user_now=db.get(uid); left=(int(user_now['requests'])+int(user_now['paid_requests'])) if user_now else 0
         await send_user_message(uid,f'Ваше количество запросов: {left}\n\nЕсли хочешь посмотреть другую пару — снова открой «Синастрия» 💞')
         print(f'[SYNASTRY] DONE uid={uid}',flush=True)
