@@ -3,8 +3,6 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any
 
-from synastry_engine import build_report as _build_rule_synastry_report, build_aspect_detail as _build_rule_aspect_detail, build_summary as _build_rule_summary
-
 
 # ============================================================
 # Общие словари
@@ -756,25 +754,3 @@ def emotional(aspects: list[dict[str, Any]]) -> list[dict[str, Any]]:
         or _is_pair(a, 'Луна', 'Марс')
         or _is_pair(a, 'Солнце', 'Луна')
     ]
-
-
-# ============================================================
-# Новая rule-based синастрия: приоритеты -> темы -> дедупликация -> текст
-# ============================================================
-
-def build_synastry_rule_report(calc: dict[str, Any]) -> dict[str, Any]:
-    return _build_rule_synastry_report(calc)
-
-
-def build_synastry_aspect_detail(a: dict[str, Any], name1: str = '', name2: str = '', seen_topics=None, index=None) -> dict[str, Any]:
-    return _build_rule_aspect_detail(a, name1 or 'Человек 1', name2 or 'Человек 2')
-
-
-def build_synastry_compatibility_summary(calc: dict[str, Any]) -> dict[str, Any]:
-    return _build_rule_summary(calc)
-
-
-def build_synastry_interpretation(calc: dict[str, Any]) -> str:
-    """Публичный текстовый рендер rule-based синастрии."""
-    from synastry_engine import render_text_report
-    return render_text_report(calc)
