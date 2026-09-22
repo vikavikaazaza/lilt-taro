@@ -90,8 +90,7 @@ DECK_NAMES={'waite':'Таро Уэйта','manara':'Таро Манара','day'
 def menu():
     return InlineKeyboardMarkup(inline_keyboard=[
       [InlineKeyboardButton(text='Таро Уэйта',callback_data='deck:waite'),InlineKeyboardButton(text='Таро Манара',callback_data='deck:manara')],
-      [InlineKeyboardButton(text='Карта дня',callback_data='day')],
-      [InlineKeyboardButton(text='Синастрия',callback_data='synastry')],
+      [InlineKeyboardButton(text='Карта дня',callback_data='day'),InlineKeyboardButton(text='Синастрия',callback_data='synastry')],
       [InlineKeyboardButton(text='Реферальная программа ',callback_data='friend')],
       [InlineKeyboardButton(text='Оформить подписку ',callback_data='pay')]])
 
