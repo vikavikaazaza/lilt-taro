@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#090816">
 <title>Синастрия · Лилит</title>
+<meta name="synastry-version" content="rules-v1">
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
 <style>
@@ -188,20 +189,6 @@ input[type="time"]{
     margin-top:16px;
 }
 
-.compatibility-card{
-    margin-top:14px;
-    border:1px solid #3a315a;
-    background:#15132a;
-    border-radius:16px;
-    padding:15px;
-}
-.compatibility-headline{font-size:18px;font-weight:700;line-height:1.35;margin-bottom:8px;}
-.compatibility-lead{font-size:14px;color:#eee8df;line-height:1.58;margin-bottom:12px;}
-.compatibility-grid{display:grid;gap:9px;}
-.compatibility-item{border-top:1px solid #292440;padding-top:9px;}
-.compatibility-label{font-size:12px;font-weight:700;color:#ead9b6;margin-bottom:3px;}
-.compatibility-text{font-size:14px;color:#d9d2c8;line-height:1.55;}
-
 .section-title{
     font-size:16px;
     font-weight:700;
@@ -224,23 +211,11 @@ input[type="time"]{
     overflow-wrap:anywhere;
 }
 
-.aspect small{display:block;color:#8f879f;margin-top:3px;}
-
-.aspect-openable{padding:0;overflow:hidden;}
-.aspect-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 14px;cursor:pointer;list-style:none;}
-.aspect-summary::-webkit-details-marker{display:none;}
-.aspect-title{font-weight:700;line-height:1.35;}
-.aspect-short{font-size:13px;color:#eee8df;line-height:1.45;margin-top:5px;}
-.aspect-why{font-size:12px;color:#8f879f;line-height:1.4;margin-top:6px;}
-.aspect-meta{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px;}
-.pill{display:inline-flex;align-items:center;border:1px solid #3a315a;border-radius:999px;padding:3px 8px;font-size:11px;color:#cfc5b6;background:#15132a;}
-.chevron{font-size:20px;color:#ead9b6;transition:transform .2s ease;flex:0 0 auto;}
-details[open] .chevron{transform:rotate(180deg);}
-.aspect-detail{border-top:1px solid #292440;padding:13px 14px 15px;}
-.detail-block{margin-top:12px;}
-.detail-block:first-child{margin-top:0;}
-.detail-label{font-size:12px;font-weight:700;color:#ead9b6;margin-bottom:4px;text-transform:uppercase;letter-spacing:.03em;}
-.detail-text{font-size:14px;color:#eee8df;line-height:1.58;}
+.aspect small{
+    display:block;
+    color:#8f879f;
+    margin-top:3px;
+}
 
 .submit{
     width:100%;
@@ -336,6 +311,27 @@ details[open] .chevron{transform:rotate(180deg);}
         padding-right:9px;
     }
 }
+
+.reading-summary{line-height:1.65;color:#eee5d3;font-size:15px}
+.reading-summary .summary-title{font-size:21px;font-weight:700;margin-bottom:8px}
+.reading-summary .summary-text{white-space:pre-line}
+.summary-themes{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px}
+.summary-theme{padding:7px 10px;border:1px solid #4b416e;border-radius:999px;color:#d9c9a9;background:#0d0c1c;font-size:12px}
+.aspect-card{border:1px solid #302a52;background:#0d0c1c;border-radius:14px;overflow:hidden}
+.aspect-card summary{list-style:none;cursor:pointer;padding:13px 14px}
+.aspect-card summary::-webkit-details-marker{display:none}
+.aspect-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
+.aspect-title{font-size:15px;font-weight:700;line-height:1.35}
+.aspect-topic{display:inline-block;margin-top:7px;font-size:11px;color:#d7bb73}
+.aspect-meta{font-size:11px;color:#8f879f;margin-top:6px;line-height:1.4}
+.aspect-arrow{color:#8f879f;font-size:18px;flex:0 0 auto}
+.aspect-card[open] .aspect-arrow{transform:rotate(180deg)}
+.aspect-body{padding:0 14px 14px;border-top:1px solid #292440}
+.aspect-section{margin-top:13px}
+.aspect-section-title{font-size:12px;color:#d7bb73;margin-bottom:5px;font-weight:700}
+.aspect-section-text{font-size:14px;line-height:1.62;color:#eee5d3;white-space:pre-line}
+.reading-section{border:1px solid #302a52;background:#0d0c1c;border-radius:14px;padding:14px;margin-top:10px}.reading-section-title{font-size:17px;font-weight:700;margin-bottom:8px;color:#eee5d3}.reading-section-text{font-size:14px;line-height:1.65;color:#eee5d3;white-space:pre-line}.reading-section details{margin-top:10px}.angle-card{padding:12px 14px;border:1px solid #302a52;background:#0d0c1c;border-radius:14px}
+@media(max-width:600px){.reading-summary{font-size:14px}.aspect-title{font-size:14px}.aspect-section-text{font-size:14px}}
 </style>
 </head>
 
@@ -416,15 +412,25 @@ details[open] .chevron{transform:rotate(180deg);}
 </div>
 
 <div class="card preview-box">
-    <div class="section-title">Узнать, что происходит между вами</div>
-    <div class="hint">Сначала увидите общую картину пары. Ниже — отдельные связи. В каждой карточке сразу написано, зачем она важна.</div>
-    <button id="submit" class="submit" type="button">Посмотреть совместимость</button>
+    <div class="section-title">Ваш разбор отношений</div>
+    <div id="summary" class="reading-summary" hidden></div>
+    <div id="sections"></div>
+</div>
+
+<div class="card preview-box">
+    <div class="section-title">Все аспекты</div>
+    <div class="hint" style="margin-bottom:10px">Каждый пункт можно открыть. Внутри — что именно он даёт вашим отношениям и как это может проявляться в обычной жизни.</div>
+    <button id="preview" class="secondary" type="button">Показать аспекты</button>
+    <div id="aspects" class="aspects"></div>
+</div>
+
+<div class="card">
+    <button id="submit" class="submit" type="button">Рассчитать синастрию</button>
     <div id="status" class="status"></div>
     <div class="hint">
-        Расчёт происходит прямо здесь. Ничего дополнительно получать в Telegram не нужно.
+        Синастрия бесплатна — запросы с баланса не списываются.
         Если время рождения неизвестно, дома и углы соответствующего человека не используются.
     </div>
-    <div id="aspects" class="aspects"></div>
     <div class="bottom-note">Поиск города: © OpenStreetMap contributors</div>
 </div>
 
@@ -620,98 +626,134 @@ function validate(){
     return true;
 }
 
-function detailBlock(label,text){
-    if(!text)return '';
-    return `<div class="detail-block"><div class="detail-label">${label}</div><div class="detail-text">${text}</div></div>`;
+function esc(value){
+    return String(value??'')
+        .replace(/&/g,'&amp;')
+        .replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;')
+        .replace(/"/g,'&quot;')
+        .replace(/'/g,'&#039;');
 }
 
-function renderAspect(a){
-    const d=a.detail||{};
-    const el=document.createElement('details');
-    el.className='aspect aspect-openable';
+function renderSummary(summary){
+    const box=document.getElementById('summary');
+    if(!summary){box.hidden=true;box.innerHTML='';return;}
+    const scores=summary.scores||{};
+    const labels={attraction:'Притяжение',emotions:'Эмоции',communication:'Общение',passion:'Страсть',long_term:'Долгосрочность',conflicts:'Напряжение'};
+    const themes=Object.entries(scores).filter(([k,v])=>labels[k]&&Number(v)>0).sort((a,b)=>Number(b[1])-Number(a[1])).slice(0,4)
+        .map(([k,v])=>`<span class="summary-theme">${esc(labels[k])}</span>`).join('');
+    box.innerHTML=`<div class="summary-title">${esc(summary.title||'Общая динамика')}</div><div class="summary-text">${esc(summary.text||'')}</div>${themes?`<div class="summary-themes">${themes}</div>`:''}`;
+    box.hidden=false;
+}
 
-    const summary=document.createElement('summary');
-    summary.className='aspect-summary';
-    summary.innerHTML=`<div style="min-width:0">
-        <div class="aspect-title">${a.person1_planet} ${a.aspect} ${a.person2_planet}</div>
-        <div class="aspect-short">${d.short||''}</div>
-        <div class="aspect-why">${d.why||'Здесь есть отдельная важная тема отношений.'}</div>
-        <div class="aspect-meta">
-            ${d.category?`<span class="pill">${d.category}</span>`:''}
-            ${d.orb_text?`<span class="pill">Связь ${d.orb_text}</span>`:''}
-        </div>
-    </div><span class="chevron">⌄</span>`;
-    el.appendChild(summary);
+function renderSections(report){
+    const box=document.getElementById('sections');
+    box.innerHTML='';
+    for(const section of (report?.sections||[])){
+        const wrap=document.createElement('div');
+        wrap.className='reading-section';
+        const items=section.items||[];
+        wrap.innerHTML=`<div class="reading-section-title">${esc(section.title||'Раздел')}</div><div class="reading-section-text">${esc(section.text||'')}</div>`;
+        if(items.length){
+            const list=document.createElement('div');
+            list.className='aspects';
+            list.style.marginTop='10px';
+            list.innerHTML=items.map((a,i)=>aspectHtml(a,i)).join('');
+            wrap.appendChild(list);
+        }
+        box.appendChild(wrap);
+    }
+}
 
-    const body=document.createElement('div');
-    body.className='aspect-detail';
-    body.innerHTML=
-        detailBlock('Как это проявляется',d.between)+
-        detailBlock('Что это меняет в отношениях',d.action);
-    el.appendChild(body);
-    return el;
+function aspectHtml(a,index){
+    const d=a.detail||a||{};
+    const title=d.title || `${a.person1_planet||''} — ${a.aspect||''} — ${a.person2_planet||''}`;
+    const topic=d.topic_label||d.topic||'отношения';
+    const meta=[a.person1_sign,a.person2_sign,a.orb_text?`орб ${a.orb_text}`:'',d.strength?`сила: ${d.strength}`:''].filter(Boolean).join(' · ');
+    const sections=[
+        ['Что это даёт отношениям',d.what_it_gives],
+        ['Как это проявляется',d.how_it_appears],
+        ['Пример из жизни',d.example],
+        ['Что важно учитывать',d.advice]
+    ].filter(x=>x[1]);
+    return `<details class="aspect-card"><summary><div class="aspect-head"><div><div class="aspect-title">${esc(title)}</div><div class="aspect-topic">${esc(topic)}</div>${meta?`<div class="aspect-meta">${esc(meta)}</div>`:''}</div><div class="aspect-arrow">⌄</div></div></summary><div class="aspect-body">${sections.map(([h,t])=>`<div class="aspect-section"><div class="aspect-section-title">${esc(h)}</div><div class="aspect-section-text">${esc(t)}</div></div>`).join('')}</div></details>`;
 }
 
 function render(data){
+    renderSummary(data.summary);
+    renderSections(data.report||{});
     const box=document.getElementById('aspects');
     box.innerHTML='';
-
-    const summary=data.compatibility_summary||{};
-    if(summary.headline){
-        const card=document.createElement('div');
-        card.className='compatibility-card';
-        card.innerHTML=
-            `<div class="compatibility-headline">${summary.headline}</div>`+
-            `<div class="compatibility-lead">${summary.text||''}</div>`+
-            `<div class="compatibility-grid">`+
-            `<div class="compatibility-item"><div class="compatibility-label">Эмоции</div><div class="compatibility-text">${summary.emotion||''}</div></div>`+
-            `<div class="compatibility-item"><div class="compatibility-label">Любовь и притяжение</div><div class="compatibility-text">${summary.love||''}</div></div>`+
-            `<div class="compatibility-item"><div class="compatibility-label">Общение</div><div class="compatibility-text">${summary.communication||''}</div></div>`+
-            `<div class="compatibility-item"><div class="compatibility-label">Конфликты</div><div class="compatibility-text">${summary.conflict||''}</div></div>`+
-            `</div>`;
-        box.appendChild(card);
+    const aspects=data.aspects||[];
+    if(!aspects.length){
+        box.innerHTML='<div class="aspect">Значимых межпланетных аспектов в выбранном приоритете не найдено.</div>';
+    }else{
+        const note=document.createElement('div');
+        note.className='hint';
+        note.style.margin='0 0 10px';
+        note.textContent=`Система нашла ${data.aspect_count||aspects.length} аспектов и отобрала ${data.selected_count||aspects.length} наиболее значимых. Остальные не выводятся отдельно, чтобы один и тот же смысл не повторялся много раз.`;
+        box.appendChild(note);
+        const list=document.createElement('div');
+        list.innerHTML=aspects.map((a,i)=>aspectHtml(a,i)).join('');
+        box.appendChild(list);
     }
 
-    const items=[...(data.aspects||[])];
-    const seen=new Set();
-    const uniqueItems=items.filter(a=>{
-        const key=`${a.person1_planet}|${a.aspect}|${a.person2_planet}`;
-        if(seen.has(key))return false;
-        seen.add(key);
-        return true;
-    });
-
-    if(!uniqueItems.length && !(data.angle_aspects||[]).length){
-        const empty=document.createElement('div');
-        empty.className='aspect';
-        empty.textContent='Значимых межпланетных аспектов не найдено.';
-        box.appendChild(empty);
-        return;
-    }
-
-    const heading=document.createElement('div');
-    heading.className='section-title';
-    heading.style.marginTop='18px';
-    heading.textContent=`Связи между планетами · ${uniqueItems.length}`;
-    box.appendChild(heading);
-    uniqueItems.forEach(a=>box.appendChild(renderAspect(a)));
-
-    if((data.angle_aspects||[]).length){
-        const angleTitle=document.createElement('div');
-        angleTitle.className='section-title';
-        angleTitle.style.marginTop='18px';
-        angleTitle.textContent=`Планеты и точки карты · ${data.angle_aspects.length}`;
-        box.appendChild(angleTitle);
-        for(const a of data.angle_aspects){
-            const copy={
-                ...a,
-                person1_planet:a.from_person===1?a.planet:a.point,
-                person2_planet:a.from_person===1?a.point:a.planet,
-            };
-            box.appendChild(renderAspect(copy));
+    const angles=data.angle_aspects||[];
+    if(angles.length){
+        const title=document.createElement('div');
+        title.className='section-title';
+        title.style.marginTop='16px';
+        title.textContent='Планеты и углы карты';
+        box.appendChild(title);
+        for(const a of angles){
+            const el=document.createElement('div');
+            el.className='angle-card';
+            el.style.marginTop='8px';
+            el.innerHTML=`<div class="aspect-title">${esc(a.planet||'')} — ${esc(a.aspect||'')} — ${esc(a.point||'')}</div><div class="aspect-meta">${esc(a.from_person||'')} → ${esc(a.to_person||'')}${a.orb_text?` · орб ${esc(a.orb_text)}`:''}</div>`;
+            box.appendChild(el);
         }
     }
 }
+
+async function preview(){
+    if(!validate())return;
+
+    const btn=document.getElementById('preview');
+
+    btn.disabled=true;
+    btn.textContent='Считаю…';
+
+    try{
+        const r=await fetch('/api/synastry/preview',{
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({
+                initData,
+                person1:getPerson(1),
+                person2:getPerson(2)
+            })
+        });
+
+        const d=await r.json().catch(()=>({}));
+
+        if(!r.ok){
+            throw new Error(d.detail||'Не удалось рассчитать аспекты');
+        }
+
+        render(d);
+        showStatus(`Найдено аспектов: ${d.aspect_count||0}.`);
+
+    }catch(e){
+        console.error(e);
+        showStatus(e.message||'Не удалось рассчитать аспекты.');
+
+    }finally{
+        btn.disabled=false;
+        btn.textContent='Показать аспекты';
+    }
+}
+
+document.getElementById('preview').onclick=preview;
 
 document.getElementById('submit').onclick=async()=>{
     if(submitting||!validate())return;
@@ -741,11 +783,15 @@ document.getElementById('submit').onclick=async()=>{
         }
 
         render(d);
-        showStatus(`Готово. Найдено аспектов: ${d.aspect_count||0}. Все расшифровки доступны здесь.`);
+        showStatus(`Разбор готов ✨ Найдено аспектов: ${d.aspect_count||0}.`);
 
         try{
             tg?.HapticFeedback?.impactOccurred?.('medium');
         }catch(e){}
+
+        window.scrollTo({top:document.getElementById('summary').closest('.card').offsetTop-10,behavior:'smooth'});
+        submitting=false;
+        btn.disabled=false;
 
     }catch(e){
         console.error(e);
