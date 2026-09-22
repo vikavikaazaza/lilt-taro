@@ -455,7 +455,9 @@ def build_synastry_aspect_detail(a: dict[str, Any], name1: str = '', name2: str 
     if 'Марс' in pair: topics.append('действия и конфликты')
     if 'Сатурн' in pair: topics.append('ответственность')
     if any(x in pair for x in ('Уран', 'Нептун', 'Плутон')): topics.append('свобода и глубокие реакции')
-    title = f'{a.get("person1_planet", "")} — {aspect} — {a.get("person2_planet", "")}'
+    p1 = str(a.get('person1_planet') or '')
+    p2 = str(a.get('person2_planet') or '')
+    title = f'{p1} {_name_case(n1, "gen")} — {aspect.lower()} — {p2} {_name_case(n2, "gen")}'
     teaser = text.split('. ', 1)[0].strip()
     return {
         'title': title,
@@ -472,28 +474,48 @@ def build_synastry_aspect_detail(a: dict[str, Any], name1: str = '', name2: str 
 
 
 def build_synastry_compatibility_summary(calc: dict[str, Any]) -> dict[str, Any]:
-    """Build a compact, plain-Russian summary for the Mini App."""
+    """Короткое, конкретное вступление для Mini App без общих шаблонных фраз."""
     aspects = list(calc.get('aspects') or [])
     n1, n2 = str(calc.get('name1') or 'Первый человек'), str(calc.get('name2') or 'Второй человек')
     hard = [a for a in aspects if _hard(a)]
     soft = [a for a in aspects if not _hard(a)]
-    themes = []
     pairs = [_pair_key(a) for a in aspects]
-    if any('Луна' in p for p in pairs): themes.append('эмоции и потребность в близости')
-    if any('Венера' in p for p in pairs): themes.append('симпатия и притяжение')
+    themes=[]
+    if any('Луна' in p for p in pairs): themes.append('эмоциональная связь')
+    if any('Венера' in p or ('Солнце' in p and 'Венера' in p) for p in pairs): themes.append('симпатия и притяжение')
     if any('Меркурий' in p for p in pairs): themes.append('общение')
-    if any('Марс' in p for p in pairs): themes.append('действия и конфликты')
-    if any('Сатурн' in p for p in pairs): themes.append('ответственность и долгосрочные решения')
-    if any(x in p for p in pairs for x in ('Уран','Нептун','Плутон')): themes.append('свобода и сильные переживания')
-    lead = f'У {n1} и {n2} есть несколько разных точек связи: ' + ', '.join(themes[:4]) + '.' if themes else f'У {n1} и {n2} нет одной темы, которая полностью определяет отношения.'
-    if hard and soft:
-        balance = 'В карте есть и лёгкие, и напряжённые связи. Поэтому многое зависит от того, как вы разговариваете о сложных моментах и как договариваетесь.'
-    elif hard:
-        balance = 'Здесь особенно важно спокойно обсуждать спорные ситуации и не пытаться решить всё через давление.'
-    else:
-        balance = 'Основные связи скорее помогают понимать друг друга и находить общий язык.'
-    return {'title': 'Общая картина', 'text': lead + ' ' + balance, 'themes': themes, 'aspect_count': len(aspects), 'strong_aspects': len([a for a in aspects if float(a.get('orb', 99) or 99) <= 2]), 'names': {'person1': n1, 'person2': n2}}
+    if any('Сатурн' in p for p in pairs): themes.append('серьёзность и планы')
+    if any('Уран' in p or 'Плутон' in p for p in pairs): themes.append('свобода и сильные реакции')
 
+    facts=[]
+    if any(_is_pair(a,'Меркурий','Марс') for a in aspects):
+        facts.append('Разговоры могут быть очень быстрыми: легко подхватить мысль друг друга, но спор тоже может вспыхнуть за несколько минут.')
+    if any(_is_pair(a,'Луна','Луна') for a in aspects):
+        facts.append('Эмоциональные привычки во многом похожи, поэтому вам легче понять настроение друг друга без длинных объяснений.')
+    if any(_is_pair(a,'Венера','Марс') or _is_pair(a,'Солнце','Венера') for a in aspects):
+        facts.append('Есть заметная симпатия и физический интерес: желание встречаться и получать внимание друг от друга здесь выражено.')
+    if any(_is_pair(a,'Сатурн','Венера') or _is_pair(a,'Солнце','Сатурн') for a in aspects):
+        facts.append('Отношения затрагивают серьёзные темы: статус, обязательства, деньги и планы на будущее.')
+    if any(_is_pair(a,'Луна','Уран') or _is_pair(a,'Марс','Уран') for a in aspects):
+        facts.append('Одновременно есть тема свободы: одному может хотеться больше близости, а другому — больше пространства для себя.')
+
+    lead = f'У {_name_case(n1, "gen")} и {_name_case(n2, "gen")} заметны ' + ', '.join(themes[:4]) + '.' if themes else f'У {_name_case(n1, "gen")} и {_name_case(n2, "gen")} нет одной темы, которая полностью описывает эту связь.'
+    if facts:
+        body=' '.join(facts[:3])
+    elif hard and soft:
+        body='Есть и поддерживающие, и напряжённые связи, поэтому особенно важны разговоры о том, что каждый чувствует и чего ждёт.'
+    elif hard:
+        body='Самые чувствительные места связаны с разницей в реакциях и необходимостью заранее договариваться о границах.'
+    else:
+        body='Большая часть заметных связей помогает поддерживать контакт и находить общий язык.'
+    return {
+        'title':'Общая картина',
+        'text':lead+' '+body,
+        'themes':themes,
+        'aspect_count':len(aspects),
+        'strong_aspects':len([a for a in aspects if float(a.get('orb',99) or 99)<=2]),
+        'names':{'person1':n1,'person2':n2}
+    }
 
 def build_synastry_interpretation(calc: dict[str, Any]) -> str:
     return '\n\n'.join(title + '\n' + body for title, body in _syn_narrative(calc))
