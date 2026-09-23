@@ -779,7 +779,6 @@ HOUSE_MEANINGS={
 def _house_interpretation(h:int, planets:list[str], planet_owner:str, house_owner:str)->str:
     """Short, planet-specific house interpretation with correct name cases."""
     owner_nom=_case(planet_owner,'nom')
-    owner_nom=_case(planet_owner,'nom')
     owner_gen=_case(planet_owner,'gen')
     owner_ins=_case(planet_owner,'ins')
     owner_dat=_case(planet_owner,'dat')
@@ -798,7 +797,7 @@ def _house_interpretation(h:int, planets:list[str], planet_owner:str, house_owne
             parts.append(f'Сатурн {owner_gen} добавляет вес словам: обещания, сроки и договорённости быстро становятся для {target_gen} серьёзным вопросом.')
         other=[p for p in planets if p not in {'Плутон','Сатурн'}]
         if other:
-            parts.append(f'{", ".join(other)} {owner_gen} усиливают ежедневное общение, переписки, звонки и короткие поездки.')
+            parts.append(f'{", ".join(other)} {owner_gen} усиливают ежедневное общение, переписки, звонки и короткие поездки.' if len(other) > 1 else f'{other[0]} {owner_gen} усиливает ежедневное общение, переписки, звонки и короткие поездки.')
         return ' '.join(parts) or f'{pg} {owner_gen} делают повседневное общение {target_gen} заметной частью отношений.'
 
     if h==9:
@@ -919,9 +918,13 @@ def build_sections(calc: dict[str, Any]) -> list[dict[str, Any]]:
             if not vals: continue
             subs=[]
             for h,po,ho,text_value in vals:
-                subs.append({'title':f'{po} → {h}-й дом {ho}','text':text_value})
+                planet_names = [x for x in grouped if x[0] == h and x[1] == po and x[2] == ho]
+                planets = planet_names[0][3] if planet_names else []
+                planet_label = ', '.join(planets) if planets else 'Планеты'
+                ho_gen = _case(ho, 'gen')
+                subs.append({'title':f'{planet_label} {_case(po, "gen")} в {h}-м доме {ho_gen}','text':text_value})
             house_sections.append({'id':'house_'+str(len(house_sections)),'title':cat,'text':'','items':[],'subsections':subs})
-        sections.append({'id':'daily','title':'🏠 Как отношения проявляются в жизни','text':'Здесь собраны значимые наложения домов. 3-й дом отвечает за повседневное общение и короткие поездки, 9-й — за обучение, мировоззрение и дальние поездки.','items':[],'subsections':house_sections})
+        sections.append({'id':'daily','title':'🏠 Как отношения проявляются в жизни','text':'Здесь показано, в каких сферах жизни вы сильнее всего влияете друг на друга: дом и семья, романтика, деньги, общение, карьера, обучение, путешествия и общие планы.','items':[],'subsections':house_sections})
 
     angle_details=[_angle_detail(a,n1,n2) for a in calc.get('angle_aspects',[]) if _orb(a) <= 3.0]
     angle_details.sort(key=lambda x:float(x.get('weight',0)), reverse=True)
