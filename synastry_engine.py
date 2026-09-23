@@ -904,9 +904,9 @@ def build_sections(calc: dict[str, Any]) -> list[dict[str, Any]]:
     asc_dsc=[a for a in angle_details if a.get('angle_point') in {'ASC','DSC'}]
     mc_ic=[a for a in angle_details if a.get('angle_point') in {'MC','IC'}]
     if asc_dsc:
-        sections.append({'id':'angles_person','title':'👤 Личность и образ партнёра','text':'ASC и DSC показывают влияние партнёра на самоощущение, первое впечатление и ожидания от отношений.','items':asc_dsc})
+        sections.append({'id':'angles_person','title':'Личность и образ партнёра','text':'ASC и DSC показывают влияние партнёра на самоощущение, первое впечатление и ожидания от отношений.','items':asc_dsc})
     if mc_ic:
-        sections.append({'id':'angles_life','title':'🎯 Карьера, статус и чувство дома','text':'MC и IC показывают влияние партнёра на карьерные цели, жизненный курс, дом и семейные привычки.','items':mc_ic})
+        sections.append({'id':'angles_life','title':'Карьера, статус и чувство дома','text':'MC и IC показывают влияние партнёра на карьерные цели, жизненный курс, дом и семейные привычки.','items':mc_ic})
 
     # Synthesis names the actual strongest contacts instead of repeating generic labels.
     synthesis=[]
@@ -940,7 +940,7 @@ def build_sections(calc: dict[str, Any]) -> list[dict[str, Any]]:
     if frozenset(('Марс','Уран')) in pairset: advice.append('Оставляйте друг другу личное пространство и заранее предупреждайте о резких изменениях планов.')
     if frozenset(('Луна','Луна')) in pairset: advice.append('Прямо говорите, какая поддержка нужна сейчас: разговор, объятия, помощь или тишина.')
     if not advice: advice.append('Обсуждайте ожидания до того, как они превратятся в претензию: что для вас означает внимание, свобода, деньги и совместные планы.')
-    sections.append({'id':'advice','title':'🧭 Что поможет отношениям','text':' '.join(advice[:5]),'items':[]})
+    sections.append({'id':'advice','title':'Что поможет отношениям','text':' '.join(advice[:5]),'items':[]})
     return sections
 
 def build_report(calc: dict[str, Any]) -> dict[str, Any]:
