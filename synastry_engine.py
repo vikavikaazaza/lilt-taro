@@ -245,27 +245,33 @@ def score_topics(calc: dict[str, Any]) -> dict[str, float]:
 
 
 def select_aspects(calc: dict[str, Any], limit: int | None = None) -> list[dict[str, Any]]:
+    """Return every calculated interplanetary aspect that has a supported rule.
+
+    Do not deduplicate by planet pair/aspect: the two charts can legitimately
+    contain more than one contact of the same planet pair/aspect, and the report
+    must keep the calculator count consistent with the displayed list.
+    """
     aspects=[]
-    seen=set()
     for a in calc.get('aspects',[]):
-        if _pair(a) not in PAIR_RULES: continue
-        x=dict(a); x['rule_weight']=round(aspect_weight(a),2); x['aspect_tone']=ASPECT_TONE.get(str(a.get('aspect','')), '')
-        key=(_pair(a), str(a.get('aspect','')))
-        # Keep the most precise instance if duplicate pair/aspect occurs.
-        if key in seen: continue
-        seen.add(key); aspects.append(x)
+        if _pair(a) not in PAIR_RULES:
+            continue
+        x=dict(a)
+        x['rule_weight']=round(aspect_weight(a),2)
+        x['aspect_tone']=ASPECT_TONE.get(str(a.get('aspect','')), '')
+        aspects.append(x)
     aspects.sort(key=lambda a:(-float(a.get('rule_weight',0)), _orb(a)))
     return aspects if limit is None else aspects[:limit]
 
 
 def featured_aspects(calc: dict[str, Any], limit: int = 7) -> list[dict[str, Any]]:
-    """Главные межпланетные связи. Углы намеренно не входят в этот топ:
-    они разбираются отдельно, чтобы один и тот же контакт не повторялся трижды.
-    """
+    """Seven strongest interplanetary contacts; angle contacts are separate."""
     candidates=[]
     for a in select_aspects(calc):
-        if _orb(a) < 7.0:
-            x=dict(a); x['_kind']='planet'; candidates.append(x)
+        # A planet-specific orb may legitimately be wider than 7 degrees for
+        # the luminaries.  Strength is handled separately from selection.
+        x=dict(a)
+        x['_kind']='planet'
+        candidates.append(x)
     candidates.sort(key=lambda a:(-float(a.get('rule_weight',0)), _orb(a)))
     return candidates[:max(1, int(limit))]
 
@@ -556,21 +562,15 @@ def _aspect_sentences(a: dict[str, Any], n1: str, n2: str) -> tuple[str, str, st
 
 
 def _display_strength(a: dict[str, Any], weight: float) -> str:
+    """Use one transparent rule: strength follows the exact orb only."""
     orb=_orb(a)
-    pair=_pair(a)
-    asp=str(a.get('aspect',''))
-    if pair == frozenset(('Луна','Луна')) and orb < 7:
-        return 'заметная'
-    if orb >= 7:
-        return 'слабая'
-    if asp in {'Соединение','Оппозиция','Квадрат','Тригон','Секстиль'} and orb <= 2:
+    if orb <= 2:
         return 'высокая'
     if orb <= 4:
         return 'заметная'
     if orb <= 6:
         return 'умеренная'
     return 'слабая'
-
 
 def _detail(a: dict[str, Any], n1: str, n2: str, used_topics: set[str]|None=None, calc: dict[str, Any]|None=None) -> dict[str, Any]:
     p1,p2=str(a.get('person1_planet','')),str(a.get('person2_planet',''))
@@ -608,25 +608,32 @@ def _section_summary(details: list[dict[str, Any]], topic: str, fallback: str) -
 
 
 def _angle_detail(a: dict[str, Any], n1: str, n2: str) -> dict[str, Any]:
-    from_person=int(a.get('from_person',1) or 1); to_person=int(a.get('to_person',2) or 2)
-    owner=n1 if from_person==1 else n2; target=n2 if to_person==2 else n1
-    owner_gen=_case(owner,'gen'); owner_ins=_case(owner,'ins'); target_gen=_case(target,'gen'); target_acc=_case(target,'acc')
-    planet=str(a.get('planet','')); point=str(a.get('point','')); asp=str(a.get('aspect','')); orb=_orb(a)
-    asp_ins={'Тригон':'тригоне','Секстиль':'секстиле','Квадрат':'квадрате','Оппозиция':'оппозиции','Соединение':'соединении'}.get(asp, asp.lower())
-    roles={
-      'Солнце':'самооценку и желание проявляться','Луна':'эмоции и чувство безопасности','Меркурий':'мысли и способ разговаривать',
-      'Венера':'симпатию и способ проявлять внимание','Марс':'инициативу и реакцию на давление','Юпитер':'рост и ощущение возможностей',
-      'Сатурн':'ответственность и границы','Уран':'свободу и желание делать по-своему','Нептун':'впечатление и мечты','Плутон':'глубину и чувствительность к контролю'
-    }
+    from_person=int(a.get('from_person',1) or 1)
+    to_person=int(a.get('to_person',2) or 2)
+    owner=n1 if from_person==1 else n2
+    target=n2 if to_person==2 else n1
+    owner_nom=_case(owner,'nom')
+    owner_gen=_case(owner,'gen')
+    owner_ins=_case(owner,'ins')
+    target_gen=_case(target,'gen')
+    target_dat=_case(target,'dat')
+    target_acc=_case(target,'acc')
+    target_ins=_case(target,'ins')
+    planet=str(a.get('planet',''))
+    point=str(a.get('point',''))
+    asp=str(a.get('aspect',''))
+    orb=_orb(a)
+
     if point=='ASC':
+        point_title='Личность и первое впечатление'
         if planet=='Марс':
-            meaning=f'{owner} действует на {target_acc} очень прямо: его энергия заметно влияет на самоощущение {target_gen}. Притяжение может быть сильным, но резкость быстро воспринимается как давление.'
-            manifestation=f'Прямота {owner}, его темп или манера настаивать на своём могут заставлять {target_acc} защищать личные границы.'
+            meaning=f'{owner_nom} действует на {target_acc} очень прямо: энергия {owner_gen} влияет на самоощущение {target_gen}. Притяжение может быть сильным, но резкость быстро воспринимается как давление.'
+            manifestation=f'Прямота {owner_gen}, темп и манера настаивать на своём могут заставлять {target_acc} защищать личные границы.'
             example=f'{owner} предлагает сделать всё сразу, а {target} ещё не готов — и обычная просьба быстро превращается в раздражение.'
             advice='Сначала спрашивайте о готовности партнёра, а уже потом настаивайте на действии.'
         elif planet=='Луна':
-            meaning=f'Эмоциональные реакции {owner} заметно отражаются на самоощущении {target_gen}. {target} может чувствовать, что настроение партнёра сразу влияет и на него.'
-            manifestation=f'Когда {owner} расстроен, напряжение быстро становится заметно {target}; когда спокойно — рядом легче расслабиться.'
+            meaning=f'Эмоциональные реакции {owner_gen} заметно отражаются на самоощущении {target_gen}. {target} может чувствовать, что настроение партнёра сразу влияет и на него.'
+            manifestation=f'Когда {owner} расстроен, напряжение быстро становится заметно {target_dat}; когда всё спокойно, рядом легче расслабиться.'
             example=f'{owner} замолкает после неприятного разговора, а {target} сразу решает, что сделал что-то не так.'
             advice='Называйте причину своего состояния прямо, чтобы партнёру не приходилось угадывать её.'
         elif planet=='Венера':
@@ -635,96 +642,113 @@ def _angle_detail(a: dict[str, Any], n1: str, n2: str) -> dict[str, Any]:
             example=f'После тёплого сообщения от {owner} {target} становится увереннее и охотнее идёт на встречу.'
             advice='Показывайте симпатию понятными действиями, а не проверяйте, догадается ли партнёр сам.'
         elif planet=='Плутон':
-            meaning=f'Влияние {owner_gen} на самоощущение {target_gen} глубокое: рядом с ним сильнее проявляются вопросы доверия, силы и личных границ.'
+            meaning=f'Влияние {owner_gen} на самоощущение {target_gen} глубокое: рядом сильнее проявляются вопросы доверия, силы и личных границ.'
             manifestation=f'{target} может особенно остро реагировать на оценку, контроль или попытку {owner_gen} изменить его поведение.'
             example=f'Фраза {owner_gen} о внешности или решении {target_gen} задевает сильнее, чем аналогичная фраза от другого человека.'
             advice='Не используйте близость как способ управлять самооценкой партнёра.'
         else:
-            verb='поддерживает' if asp in {'Тригон','Секстиль'} else 'задевает'
-            meaning=f'{owner} через {roles.get(planet,"свою энергию")} заметно влияет на самоощущение {target_gen}. При {asp_ins} это {"легче принимается и может усиливать интерес" if verb=="поддерживает" else "может вызывать более резкую реакцию"}.'
+            meaning=f'{owner_nom} заметно влияет на самоощущение {target_gen} через тему «{planet}». При мягком аспекте это легче принимается, при напряжённом — может сильнее задевать.'
             manifestation=f'{target} быстрее обычного замечает слова, настроение и действия {owner_gen} и придаёт им больше значения.'
             example=f'Небольшое изменение в поведении {owner_gen} {target} замечает почти сразу, хотя для остальных оно может быть незаметным.'
             advice='Обсуждайте реакцию прямо, не заставляя партнёра угадывать её причину.'
     elif point=='DSC':
+        point_title='Партнёрство и образ пары'
         if planet=='Марс':
-            meaning=f'{owner} сильно включает у {target_gen} тему партнёрства: рядом с ним хочется действовать, но одновременно приходится отстаивать свои правила отношений.'
-            manifestation=f'Инициатива {owner} быстро воспринимается как предложение изменить формат отношений — и {target} может отвечать так же резко.'
-            example='Разговор о том, куда ехать на выходные, внезапно превращается в спор о том, кто принимает решения в паре.'
+            meaning=f'{owner_nom} сильно включает у {target_gen} тему партнёрства: рядом хочется действовать, но одновременно приходится отстаивать свои правила отношений.'
+            manifestation=f'Инициатива {owner_gen} быстро воспринимается как предложение изменить формат отношений, и {target} может отвечать так же резко.'
+            example=f'Разговор о том, куда ехать на выходные, внезапно превращается в спор о том, кто принимает решения в паре.'
             advice='Заранее разделяйте инициативу и право на окончательное решение.'
         elif planet=='Венера':
-            meaning=f'{owner} попадает прямо в представление {target_gen} о привлекательном партнёре. Симпатия здесь заметна, но ожидания от внимания тоже становятся выше.'
-            manifestation=f'{target} особенно замечает, как {owner} проявляет заботу, красоту, нежность и интерес.'
+            meaning=f'{owner_nom} попадает прямо в представление {target_gen} о привлекательном партнёре. Симпатия заметна, но и ожидания от внимания становятся выше.'
+            manifestation=f'{target} особенно замечает, как {owner} проявляет заботу, нежность и интерес.'
             example=f'Когда {owner} становится холоднее, {target} может быстрее обычного решить, что отношение к нему изменилось.'
             advice='Обсуждайте, какие проявления внимания важны каждому, вместо того чтобы проверять любовь их количеством.'
         elif planet=='Плутон':
-            meaning=f'{owner} затрагивает у {target_gen} глубокую тему доверия и власти в отношениях. Притяжение может быть очень сильным, но вместе с ним возрастает чувствительность к контролю.'
+            meaning=f'{owner_nom} затрагивает у {target_gen} глубокую тему доверия и власти в отношениях. Притяжение может быть очень сильным, но вместе с ним возрастает чувствительность к контролю.'
             manifestation=f'{target} может особенно остро реагировать на ревность, скрытность и попытки определить правила за двоих.'
-            example=f'Обычная просьба показать переписку воспринимается {target} как проверка отношений и быстро вызывает сопротивление.'
+            example=f'Обычная просьба показать переписку воспринимается {target_ins} как проверка отношений и быстро вызывает сопротивление.'
             advice='Не добивайтесь безопасности через контроль; договаривайтесь о границах заранее.'
         elif planet=='Луна':
-            meaning=f'Эмоциональный стиль {owner} заметно влияет на то, каким партнёром {target} его воспринимает. Тепло и забота становятся частью ожиданий от отношений.'
+            meaning=f'Эмоциональный стиль {owner_gen} влияет на то, каким партнёром {target} его воспринимает. Тепло и забота становятся частью ожиданий от отношений.'
             manifestation=f'{target} сильнее замечает, когда {owner} ласков или, наоборот, закрывается.'
             example=f'Если {owner} в течение дня почти не проявляется, {target} может принять это за изменение чувств.'
             advice='Не заставляйте партнёра подтверждать любовь каждый раз, когда меняется настроение.'
         else:
-            meaning=f'{owner} заметно влияет на представление {target_gen} о том, каким должен быть партнёр, через {roles.get(planet,"свою энергию")}.'
-            manifestation=f'{target} сильнее обычного оценивает поступки {owner} через призму своих ожиданий от отношений.'
-            example=f'Один и тот же поступок {owner} может восприниматься {target} не просто как действие, а как знак отношения к нему.'
+            meaning=f'{owner_nom} заметно влияет на представление {target_gen} о том, каким должен быть партнёр. Эта связь особенно заметна в ожиданиях от отношений.'
+            manifestation=f'{target} сильнее обычного оценивает поступки {owner_gen} через призму своих ожиданий от отношений.'
+            example=f'Один и тот же поступок {owner_gen} может восприниматься {target_ins} не просто как действие, а как знак отношения партнёра.'
             advice='Отделяйте конкретный поступок от общих выводов о качестве отношений.'
     elif point=='MC':
+        point_title='Карьера и статус'
         if planet=='Юпитер':
-            meaning=f'{owner} расширяет карьерные и жизненные планы {target_gen}. Его поддержка может давать уверенность попробовать более крупный вариант.'
+            meaning=f'{owner_nom} расширяет карьерные и жизненные планы {target_gen}. Поддержка {owner_gen} может дать уверенность попробовать более крупный вариант.'
             manifestation=f'После разговоров с {owner_ins} {target} может чаще думать об обучении, новой работе, переезде или росте статуса.'
             example=f'{owner} предлагает идею, после которой {target} начинает рассматривать вакансию или проект, который раньше казался слишком большим.'
             advice='Пусть вдохновение остаётся поддержкой, а окончательное решение о карьере принимает тот, чья это жизнь.'
         elif planet=='Уран':
-            meaning=f'{owner} способен резко менять карьерный горизонт {target_gen}: появляются новые варианты, неожиданные идеи и желание уйти от старого сценария.'
-            manifestation=f'Планы {target} могут перестраиваться после одного разговора, предложения или неожиданной возможности.'
+            meaning=f'{owner_nom} способен резко менять карьерный горизонт {target_gen}: появляются новые варианты, неожиданные идеи и желание уйти от старого сценария.'
+            manifestation=f'Планы {target_gen} могут перестраиваться после одного разговора, предложения или неожиданной возможности.'
             example=f'{owner} предлагает переезд или новый формат работы, и {target} впервые всерьёз рассматривает смену направления.'
             advice='Не принимайте необратимое решение только из-за эффекта новизны — дайте идее время пройти проверку.'
         elif planet=='Луна':
-            meaning=f'Эмоциональная поддержка {owner} влияет на карьерные решения {target_gen}. Когда дома и в отношениях спокойно, {target} легче двигаться к своим целям.'
+            meaning=f'Эмоциональная поддержка {owner_gen} влияет на карьерные решения {target_gen}. Когда дома и в отношениях спокойно, {target} легче двигаться к своим целям.'
             manifestation=f'{target} может искать у {owner_gen} эмоциональное подтверждение перед важным профессиональным шагом.'
             example=f'Перед собеседованием или сменой работы {target} особенно нуждается в поддержке {owner}.'
             advice='Поддерживайте решение партнёра, но не берите на себя ответственность за его карьерный выбор.'
         else:
-            meaning=f'{owner} заметно влияет на карьерные цели и публичный образ {target_gen} через {roles.get(planet,"свою энергию")}.'
-            manifestation=f'Мнение {owner} может заставлять {target} пересматривать работу, статус или долгосрочное направление.'
-            example=f'После разговора с {owner_ins} {target} по-новому смотрит на проект, должность или переезд.'
+            meaning=f'{owner_nom} заметно влияет на карьерные цели и публичный образ {target_gen} через тему «{planet}».'
+            manifestation=f'Мнение {owner_gen} может заставлять {target} пересматривать работу, статус или долгосрочное направление.'
+            example=f'После разговора с {owner} {target} по-новому смотрит на проект, должность или переезд.'
             advice='Отделяйте поддержку от управления: совет полезен, когда решение остаётся за самим человеком.'
     elif point=='IC':
+        point_title='Дом и семья'
         if planet=='Юпитер':
-            meaning=f'{owner} расширяет представление {target_gen} о доме и семье. Рядом с ним может появляться желание переехать, создать больше пространства или изменить семейные привычки.'
-            manifestation=f'Тема жилья, поездок к родным и семейных планов может занимать больше места в отношениях.'
+            meaning=f'{owner_nom} расширяет представление {target_gen} о доме и семье. Рядом может появляться желание переехать, создать больше пространства или изменить семейные привычки.'
+            manifestation=f'Тема жилья, поездок к родным и семейных планов занимает больше места в отношениях.'
             example=f'После знакомства {target} начинает всерьёз обсуждать переезд, ремонт или более просторный дом.'
             advice='Сверяйте семейные мечты с бюджетом и реальными бытовыми возможностями.'
         elif planet=='Уран':
-            meaning=f'{owner} приносит в домашнюю жизнь {target_gen} больше свободы и перемен. Старый семейный уклад может перестать устраивать.'
+            meaning=f'{owner_nom} приносит в домашнюю жизнь {target_gen} больше свободы и перемен. Старый семейный уклад может перестать устраивать.'
             manifestation='Место проживания, режим дома или правила общения с родственниками могут меняться неожиданно.'
             example=f'Вместо привычного сценария {owner} предлагает переезд или новый способ организовать совместный быт.'
             advice='Оставляйте пространство для свободы, но не меняйте домашние правила в одностороннем порядке.'
         elif planet=='Луна':
-            meaning=f'Эмоциональная реакция {owner} естественно попадает в домашнюю сферу {target_gen}. Рядом может возникать чувство знакомости и желание заботиться.'
-            manifestation=f'{target} быстрее привыкает к присутствию {owner} в домашней жизни и сильнее замечает его настроение.'
+            meaning=f'Эмоциональная реакция {owner_gen} естественно попадает в домашнюю сферу {target_gen}. Рядом может возникать чувство знакомости и желание заботиться.'
+            manifestation=f'{target} быстрее привыкает к присутствию {owner} в домашней жизни и сильнее замечает настроение партнёра.'
             example=f'Даже обычный вечер дома рядом с {owner} может давать {target} ощущение «я на своём месте».'
             advice='Берегите домашние привычки, которые действительно успокаивают обоих, и не навязывайте их как единственно правильные.'
         else:
-            meaning=f'{owner} затрагивает чувство дома и внутренней опоры {target_gen} через {roles.get(planet,"свою энергию")}.'
-            manifestation=f'Семья, жильё и прошлый опыт могут сильнее обычного реагировать на присутствие {owner}.'
+            meaning=f'{owner_nom} затрагивает чувство дома и внутренней опоры {target_gen} через тему «{planet}».'
+            manifestation=f'Семья, жильё и прошлый опыт могут сильнее обычного реагировать на присутствие {owner_gen}.'
             example=f'Разговор {owner} о доме или семье неожиданно возвращает {target} к старым воспоминаниям или решениям.'
             advice='Не переносите старые семейные сценарии на нынешние отношения автоматически.'
     else:
-        meaning=f'{owner} заметно влияет на сферу «{point}» {target_gen} через {roles.get(planet,"свою энергию")}.'
-        manifestation=f'Поступки {owner} в этой теме воспринимаются {target} сильнее обычного и могут менять его решения.'
+        point_title=point
+        meaning=f'{owner_nom} заметно влияет на сферу «{point}» {target_gen} через тему «{planet}».'
+        manifestation=f'Поступки {owner_gen} в этой теме воспринимаются {target} сильнее обычного и могут менять решения партнёра.'
         example=f'Конкретная ситуация вокруг {point} быстро показывает, насколько сильно {target} учитывает мнение {owner}.'
         advice='Обсуждайте влияние открыто и оставляйте каждому право на собственное решение.'
-    point_title={'ASC':'Личность и первое впечатление','DSC':'Партнёрство и образ пары','MC':'Карьера и статус','IC':'Дом и семья'}.get(point, point)
-    return {'title':f'{planet} {_case(owner,"gen")} — {asp.lower()} — {point} {_case(target,"gen")}',
-            'person1_name':owner,'person2_name':target,'person1_planet':planet,'person2_planet':point,
-            'topic':'angle','topic_label':point_title,'orb_text':str(a.get('orb_text','')),
-            'weight':round(float(a.get('rule_weight',0)),2),'strength':'высокая' if orb<=2 else ('заметная' if orb<=4 else 'умеренная'),
-            'what_it_gives':meaning,'how_it_appears':manifestation,'example':example,'advice':advice,
-            'angle_point':point,'from_person':from_person,'to_person':to_person}
+
+    title=f'{planet} {owner_gen} — {asp.lower()} — {point} {target_gen}'
+    return {
+        'title':title,
+        'person1_name':owner,
+        'person2_name':target,
+        'person1_planet':planet,
+        'person2_planet':point,
+        'topic':'angle',
+        'topic_label':point_title,
+        'orb_text':str(a.get('orb_text','')),
+        'weight':round(float(a.get('rule_weight',0)),2),
+        'strength':'высокая' if orb<=2 else ('заметная' if orb<=3 else 'слабая'),
+        'what_it_gives':meaning,
+        'how_it_appears':manifestation,
+        'example':example,
+        'advice':advice,
+        'angle_point':point,
+        'from_person':from_person,
+        'to_person':to_person,
+    }
 
 HOUSE_GROUPS={
     'Быт и семья':{4,6,12},
@@ -753,68 +777,83 @@ HOUSE_MEANINGS={
 }
 
 def _house_interpretation(h:int, planets:list[str], planet_owner:str, house_owner:str)->str:
-    owner_gen=_case(planet_owner,'gen'); owner_dat=_case(planet_owner,'dat'); target_gen=_case(house_owner,'gen'); target_dat=_case(house_owner,'dat')
+    """Short, planet-specific house interpretation with correct name cases."""
+    owner_gen=_case(planet_owner,'gen')
+    owner_ins=_case(planet_owner,'ins')
+    owner_dat=_case(planet_owner,'dat')
+    target_nom=_case(house_owner,'nom')
+    target_gen=_case(house_owner,'gen')
+    target_dat=_case(house_owner,'dat')
+    target_acc=_case(house_owner,'acc')
     planets=list(dict.fromkeys(planets))
     pg=', '.join(planets)
+
     if h==3:
         parts=[]
-        if 'Плутон' in planets: parts.append(f'Плутон {owner_gen} делает слова и мысли особенно значимыми для {target_gen}: разговоры могут давать близость, но при давлении превращаться в допрос.')
-        if 'Сатурн' in planets: parts.append(f'Сатурн {owner_gen} добавляет серьёзность: обещания, сроки и договорённости быстро получают вес.')
+        if 'Плутон' in planets:
+            parts.append(f'Плутон {owner_gen} делает разговоры между вами глубже: {target_dat} важно чувствовать, что его не допрашивают и не заставляют раскрывать больше, чем он готов.')
+        if 'Сатурн' in planets:
+            parts.append(f'Сатурн {owner_gen} добавляет вес словам: обещания, сроки и договорённости быстро становятся для {target_gen} серьёзным вопросом.')
         other=[p for p in planets if p not in {'Плутон','Сатурн'}]
-        if other: parts.append(f'{", ".join(other)} {owner_gen} усиливают ежедневное общение, переписки и совместные поездки.')
-        parts.append(f'В этой сфере {_case(house_owner,"dat")} важно не закрываться, а {_case(planet_owner,"dat")} — не превращать разговор в контроль.')
-        return ' '.join(parts)
+        if other:
+            parts.append(f'{", ".join(other)} {owner_gen} усиливают ежедневное общение, переписки, звонки и короткие поездки.')
+        return ' '.join(parts) or f'{pg} {owner_gen} делают повседневное общение {target_gen} заметной частью отношений.'
+
     if h==9:
         parts=[]
-        if 'Солнце' in planets: parts.append(f'Солнце {owner_gen} заметно влияет на взгляды и направление, в котором {house_owner} хочет развиваться.')
-        if 'Луна' in planets: parts.append(f'Луна {owner_gen} добавляет эмоциональную вовлечённость в темы поездок, обучения и будущего.')
+        if 'Солнце' in planets: parts.append(f'Солнце {owner_gen} заметно влияет на взгляды и направление, в котором {target_nom} хочет развиваться.')
+        if 'Луна' in planets: parts.append(f'Луна {owner_gen} добавляет эмоции в темы поездок, обучения и разговоров о будущем.')
         if 'Меркурий' in planets: parts.append(f'Меркурий {owner_gen} делает важными разговоры о знаниях, убеждениях и планах.')
         if 'Венера' in planets: parts.append(f'Венера {owner_gen} помогает связывать новые впечатления с удовольствием и совместными поездками.')
-        if 'Марс' in planets: parts.append(f'Марс {owner_gen} подталкивает {_case(house_owner,"dat")} быстрее действовать и воплощать планы.')
+        if 'Марс' in planets: parts.append(f'Марс {owner_gen} подталкивает {target_acc} быстрее действовать и воплощать планы.')
         if 'Сатурн' in planets: parts.append(f'Сатурн {owner_gen} требует от {target_gen} серьёзно относиться к срокам, обучению и договорённостям.')
-        if not parts: parts.append(f'{pg} {owner_gen} расширяют привычный мир {target_gen} через обучение, поездки и новые взгляды.')
-        parts.append('Различия во взглядах здесь лучше обсуждать открыто, а не пытаться замолчать.')
+        if not parts: parts.append(f'{pg} {owner_gen} расширяют привычный мир {target_gen} через обучение, дальние поездки и новые взгляды.')
         return ' '.join(parts)
+
     if h==10:
         parts=[]
-        if 'Венера' in planets: parts.append(f'Венера {owner_gen} помогает {_case(house_owner,"dat")} чувствовать поддержку и признание в профессиональной сфере.')
-        if 'Юпитер' in planets: parts.append(f'Юпитер {owner_gen} расширяет карьерные возможности {target_gen} и может подталкивать {_case(house_owner,"acc")} к более крупным целям.')
-        if 'Сатурн' in planets: parts.append(f'Сатурн {owner_gen} усиливает ответственность {target_gen}, статус и требования к результату.')
+        if 'Венера' in planets: parts.append(f'Венера {owner_gen} помогает {target_dat} чувствовать поддержку и признание в профессиональной сфере.')
+        if 'Юпитер' in planets: parts.append(f'Юпитер {owner_gen} расширяет карьерные возможности {target_gen} и подталкивает {target_acc} к более крупным целям.')
+        if 'Сатурн' in planets: parts.append(f'Сатурн {owner_gen} усиливает ответственность {target_gen}, требования к результату и внимание к статусу.')
         if 'Уран' in planets: parts.append(f'Уран {owner_gen} может резко менять профессиональные планы {target_gen} и открывать неожиданные варианты.')
         if not parts: parts.append(f'{pg} {owner_gen} заметно влияют на карьерные цели и статус {target_gen}.')
-        parts.append('Поддержка полезна, пока решение о карьере остаётся за тем, чья это жизнь.')
         return ' '.join(parts)
+
     if h==4:
         parts=[]
-        if 'Нептун' in planets: parts.append(f'Нептун {owner_gen} может создавать сильное ощущение эмоционального дома, но иногда — идеализировать совместную жизнь.')
-        if 'Луна' in planets: parts.append(f'Луна {owner_gen} даёт ощущение знакомости и усиливает желание заботиться друг о друге.')
+        if 'Нептун' in planets: parts.append(f'Нептун {owner_gen} может создавать сильное ощущение эмоционального дома, но иногда заставляет идеализировать совместную жизнь.')
+        if 'Луна' in planets: parts.append(f'Луна {owner_gen} даёт ощущение знакомости и усиливает желание заботиться друг о друге дома.')
         if 'Уран' in planets: parts.append(f'Уран {owner_gen} приносит в домашнюю сферу перемены и потребность делать всё по-своему.')
         if 'Сатурн' in planets: parts.append(f'Сатурн {owner_gen} связывает дом с обязанностями, правилами и ответственностью.')
         if not parts: parts.append(f'{pg} {owner_gen} заметно затрагивают домашние привычки и чувство безопасности {target_gen}.')
         return ' '.join(parts)
+
     if h==8:
         parts=[]
-        if 'Меркурий' in planets: parts.append(f'Меркурий {owner_gen} заставляет говорить о доверии, ревности, интимности и общих деньгах глубже обычного.')
-        if 'Луна' in planets: parts.append(f'Луна {owner_gen} делает эмоциональную связь глубокой: {house_owner} сильнее чувствует настроение партнёра и может ждать подтверждения доверия.')
-        if 'Плутон' in planets: parts.append(f'Плутон {owner_gen} усиливает тему контроля, страха потери и необходимости быть честными о границах.')
+        if 'Меркурий' in planets: parts.append(f'Меркурий {owner_gen} заставляет глубже говорить о доверии, ревности, интимности и общих деньгах.')
+        if 'Луна' in planets: parts.append(f'Луна {owner_gen} делает эмоциональную связь глубже: {target_dat} легче считывать настроение партнёра, но может сильнее хотеться подтверждения доверия.')
+        if 'Плутон' in planets: parts.append(f'Плутон {owner_gen} усиливает тему контроля, страха потери и необходимости честно говорить о границах.')
         if not parts: parts.append(f'{pg} {owner_gen} усиливают чувствительность к доверию, близости и общим ресурсам.')
-        parts.append('Здесь особенно важно прямо обсуждать чувства, деньги и личные границы.')
         return ' '.join(parts)
+
     if h==2:
         parts=[]
         if 'Уран' in planets: parts.append(f'Уран {owner_gen} может делать финансовые решения {target_gen} менее предсказуемыми: планы меняются внезапно.')
         if 'Нептун' in planets: parts.append(f'Нептун {owner_gen} добавляет идеализацию: важно не строить финансовые ожидания без конкретных договорённостей.')
-        if 'Юпитер' in planets: parts.append(f'Юпитер {owner_gen} может расширять возможности {target_gen} и желание тратить или вкладываться больше.')
+        if 'Юпитер' in planets: parts.append(f'Юпитер {owner_gen} может расширять возможности {target_gen} и желание тратить или вкладывать больше.')
         if not parts: parts.append(f'{pg} {owner_gen} затрагивают деньги, покупки и чувство материальной опоры {target_gen}.')
-        parts.append('Лучше заранее договориться, кто за что платит и какой вклад каждый считает справедливым.')
         return ' '.join(parts)
+
     if h==5 and 'Уран' in planets:
-        return f'Уран {owner_gen} делает романтическую часть связи неожиданной: {target_dat} может одновременно сильнее тянуться к {owner_dat} и нуждаться в свободе и новизне. Здесь хорошо работают совместные впечатления, которые не превращаются в обязательный сценарий.'
+        return f'Уран {owner_gen} делает романтическую часть связи неожиданной: {target_nom} может одновременно сильнее тянуться к {owner_dat} и нуждаться в свободе и новизне. Здесь хорошо работают совместные впечатления без обязательного сценария.'
+
     if h==7 and 'Марс' in planets:
-        return f'Марс {owner_gen} сильно включает у {target_gen} тему партнёрства: притяжение может быть быстрым, но вместе с ним возникает спор о том, кто решает и как должны строиться отношения. Важно заранее разделять инициативу и контроль.'
+        return f'Марс {owner_nom} сильно включает у {target_gen} тему партнёрства: притяжение может быть быстрым, но вместе с ним возникает спор о том, кто принимает решения и как должны строиться отношения. Важно заранее разделять инициативу и контроль.'
+
     if h==12 and 'Плутон' in planets:
         return f'Плутон {owner_gen} затрагивает скрытую эмоциональную часть жизни {target_gen}: сильные переживания не всегда сразу получают слова. Если молчать о страхах и ожиданиях, напряжение может накапливаться; честный разговор здесь особенно полезен.'
-    return f'{pg} {owner_gen} в {h}-м доме {target_gen}: {HOUSE_MEANINGS.get(h, "эта сфера становится заметнее в отношениях")}. Важно смотреть не только на влияние партнёра, но и на то, какие решения {house_owner} хочет принимать самостоятельно.'
+
+    return f'{pg} {owner_gen} в {h}-м доме {target_gen}: {HOUSE_MEANINGS.get(h, "эта сфера становится заметнее в отношениях")}. Здесь важно учитывать желания и границы {target_gen}, а не принимать решения за него.'
 
 def build_sections(calc: dict[str, Any]) -> list[dict[str, Any]]:
     n1,n2=str(calc.get('name1') or 'Человек 1'),str(calc.get('name2') or 'Человек 2')
@@ -822,23 +861,28 @@ def build_sections(calc: dict[str, Any]) -> list[dict[str, Any]]:
     details=[_detail(a,n1,n2,calc=calc) for a in all_aspects]
     featured=featured_aspects(calc,7)
     featured_details=[_detail(a,n1,n2,calc=calc) for a in featured]
+
     scores=score_topics(calc)
     labels={'attraction':'притяжение','emotions':'эмоции','communication':'общение','passion':'страсть','long_term':'долгосрочность','conflicts':'напряжение','freedom':'свобода'}
     visible=sorted(((k,v) for k,v in scores.items() if k in labels and v>0),key=lambda x:-x[1])
-    lead='Главные темы этой связи — '+', '.join(labels[k] for k,_ in visible[:3])+'. ' if visible else 'В этой связи нет одной темы, которая объясняет всё. '
-    pairset={_pair(a) for a in all_aspects if _orb(a)<7}
+    lead='В ваших отношениях заметны '+', '.join(labels[k] for k,_ in visible[:4])+'.' if visible else 'В ваших отношениях есть и притяжение, и точки напряжения.'
+    pairset={_pair(a) for a in all_aspects}
     if frozenset(('Луна','Луна')) in pairset:
-        lead+=f'Вам проще понимать эмоциональные реакции друг друга, но именно поэтому особенно заметны различия в том, как каждый восстанавливается после напряжения.'
-    elif frozenset(('Меркурий','Марс')) in pairset:
-        lead+=f'Вы быстро подхватываете мысли друг друга, поэтому разговоры одновременно сближают и легко превращаются в спор.'
-    else:
-        lead+='Связь сочетает притяжение и точки напряжения, поэтому многое зависит от того, как вы договариваетесь о границах и ожиданиях.'
+        lead+=' Эмоциональные привычки во многом похожи, поэтому настроение друг друга легче считывать без длинных объяснений.'
+    if frozenset(('Меркурий','Марс')) in pairset:
+        lead+=' Вы быстро подхватываете мысли друг друга, поэтому разговоры могут одновременно сближать и за несколько минут превращаться в спор.'
+    if frozenset(('Венера','Плутон')) in pairset:
+        lead+=' Сильное притяжение делает тему доверия особенно чувствительной.'
+    if not any(x in pairset for x in (frozenset(('Луна','Луна')),frozenset(('Меркурий','Марс')),frozenset(('Венера','Плутон')))):
+        lead+=' Многое зависит от того, как вы договариваетесь о границах, ожиданиях и совместных решениях.'
+
     sections=[
         {'id':'summary','title':'🔮 Общая картина','text':lead,'items':[]},
-        {'id':'top','title':'⭐ 7 ключевых межпланетных связей','text':'Здесь только самые сильные межпланетные контакты. Углы карты вынесены отдельно, чтобы не повторять одни и те же аспекты в разных местах.','items':featured_details}
+        {'id':'top','title':'⭐ 7 ключевых межпланетных связей','text':'Здесь только семь самых сильных межпланетных контактов. Углы карты вынесены отдельно, чтобы не повторять одни и те же связи.','items':featured_details}
     ]
+
     groups=[
-        ('attraction','❤️ Притяжение','Здесь видно, что именно поддерживает симпатию, желание встречаться и физический интерес.'),
+        ('attraction','❤️ Притяжение','Здесь видно, что поддерживает симпатию, желание встречаться и физический интерес.'),
         ('emotions','🌙 Эмоциональная связь','Здесь важны тепло, безопасность и то, как вы поддерживаете друг друга, когда настроение меняется.'),
         ('communication','🧠 Общение','Разговоры для этой пары — один из главных способов сближаться, принимать решения и проходить конфликты.'),
         ('long_term','💍 Совместная жизнь и планы','Долгосрочность проявляется через реальные действия: деньги, обязанности, статус, цели и готовность вкладываться.'),
@@ -849,8 +893,8 @@ def build_sections(calc: dict[str, Any]) -> list[dict[str, Any]]:
         if not ds: continue
         highlights=[]
         for d in ds[:3]:
-            s=str(d.get('what_it_gives','')).strip()
-            if s and s not in highlights: highlights.append(s)
+            text=str(d.get('what_it_gives','')).strip()
+            if text and text not in highlights: highlights.append(text)
         sections.append({'id':topic,'title':title,'text':base+' '+' '.join(highlights),'items':[]})
 
     grouped=[]
@@ -864,43 +908,54 @@ def build_sections(calc: dict[str, Any]) -> list[dict[str, Any]]:
     by_category=defaultdict(list)
     for h,po,ho,planets in grouped:
         cat=next((k for k,v in HOUSE_GROUPS.items() if h in v),'Другие сферы')
-        by_category[cat].append(_house_interpretation(h,planets,po,ho))
+        by_category[cat].append((h,po,ho,_house_interpretation(h,planets,po,ho)))
     if by_category:
         house_sections=[]
         order=('Быт и семья','Романтика и дети','Доверие и деньги','Карьера и статус','Общение и поездки','Мировоззрение, обучение и дальние поездки','Друзья и общие планы','Личное влияние')
         for cat in order:
             vals=by_category.get(cat,[])
-            if vals: house_sections.append({'id':'house_'+str(len(house_sections)),'title':cat,'text':' '.join(vals),'items':[]})
-        sections.append({'id':'daily','title':'🏠 Как отношения проявляются в жизни','text':'Здесь собраны значимые наложения домов. Одинаковые дома объединены, а 3-й и 9-й дом разделены: повседневное общение — отдельно от мировоззрения и дальних поездок.','items':[],'subsections':house_sections})
+            if not vals: continue
+            subs=[]
+            for h,po,ho,text_value in vals:
+                subs.append({'title':f'{po} → {h}-й дом {ho}','text':text_value})
+            house_sections.append({'id':'house_'+str(len(house_sections)),'title':cat,'text':'','items':[],'subsections':subs})
+        sections.append({'id':'daily','title':'🏠 Как отношения проявляются в жизни','text':'Здесь собраны значимые наложения домов. 3-й дом отвечает за повседневное общение и короткие поездки, 9-й — за обучение, мировоззрение и дальние поездки.','items':[],'subsections':house_sections})
 
     angle_details=[_angle_detail(a,n1,n2) for a in calc.get('angle_aspects',[]) if _orb(a) <= 3.0]
-    angle_details.sort(key=lambda x:-float(x.get('weight',0)))
+    angle_details.sort(key=lambda x:float(x.get('weight',0)), reverse=True)
     asc_dsc=[a for a in angle_details if a.get('angle_point') in {'ASC','DSC'}]
     mc_ic=[a for a in angle_details if a.get('angle_point') in {'MC','IC'}]
     if asc_dsc:
-        sections.append({'id':'angles_person','title':'👤 Личность и образ партнёра','text':'ASC и DSC показывают, как партнёр влияет на самоощущение, первое впечатление и ожидания от отношений. Каждый контакт ниже имеет отдельный сценарий.','items':asc_dsc})
+        sections.append({'id':'angles_person','title':'👤 Личность и образ партнёра','text':'ASC и DSC показывают влияние партнёра на самоощущение, первое впечатление и ожидания от отношений.','items':asc_dsc})
     if mc_ic:
         sections.append({'id':'angles_life','title':'🎯 Карьера, статус и чувство дома','text':'MC и IC показывают влияние партнёра на карьерные цели, жизненный курс, дом и семейные привычки.','items':mc_ic})
 
+    # Synthesis names the actual strongest contacts instead of repeating generic labels.
     synthesis=[]
-    if frozenset(('Луна','Луна')) in pairset:
-        synthesis.append('Эмоционально вы хорошо считываете друг друга: похожие потребности в тепле и безопасности дают ощущение знакомости. При этом вам полезно заранее говорить, нужна ли сейчас близость, разговор или тишина.')
-    if frozenset(('Меркурий','Марс')) in pairset:
-        synthesis.append('Главный двигатель пары — разговор: вы быстро понимаете ход мысли друг друга, но тот же темп делает спор резким. Если обсуждать один вопрос за раз, эта энергия работает на решение проблем, а не на победу в споре.')
-    if frozenset(('Венера','Плутон')) in pairset:
-        synthesis.append('Притяжение сильное, поэтому тема доверия не бывает нейтральной: внимание к другим людям, деньги и личные границы могут задевать глубже, чем кажется.')
-    if frozenset(('Марс','Уран')) in pairset:
-        synthesis.append('Свобода для вас не менее важна, чем близость. Попытка контролировать темп или каждый шаг способна быстро перевести интерес в сопротивление.')
-    if frozenset(('Сатурн','Венера')) in pairset or frozenset(('Солнце','Сатурн')) in pairset:
-        synthesis.append('Долгосрочный потенциал проверяется не силой эмоций, а поступками: кто держит слово, как вы делите ответственность и способны ли менять правила, когда они перестают работать.')
-    if any(a.get('angle_point')=='MC' for a in mc_ic):
-        synthesis.append('Связь может заметно менять жизненный курс: отношения затрагивают не только чувства, но и карьерные решения, планы на переезд и представление о будущем.')
-    if any(a.get('angle_point')=='IC' for a in mc_ic):
-        synthesis.append('Тема дома тоже значима: рядом друг с другом вы можете иначе смотреть на жильё, семью и привычный уклад.')
-    if synthesis:
-        sections.append({'id':'synthesis','title':'✨ Синтез','text':' '.join(synthesis[:7]),'items':[]})
+    for d in featured_details[:4]:
+        p1=d['person1_planet']; p2=d['person2_planet']; asp=d['difficulty']
+        pair=f'{p1}—{p2}'
+        if pair == 'Меркурий—Марс' or pair == 'Марс—Меркурий':
+            synthesis.append(f'Интеллектуальная искра здесь хорошо видна в связи {pair}: разговоры быстро включают обоих, но тот же темп может переводить обсуждение в спор.')
+        elif pair == 'Луна—Луна':
+            synthesis.append(f'Эмоциональная близость заметна в связи {pair}: вам проще считывать привычные реакции друг друга, хотя при напряжении одинаковая чувствительность может усиливать переживания.')
+        elif pair == 'Венера—Плутон' or pair == 'Плутон—Венера':
+            synthesis.append(f'Сильное притяжение видно в связи {pair}: внимание, ревность и тема личных границ могут иметь для вас больший вес, чем кажется со стороны.')
+        elif pair == 'Сатурн—Венера' or pair == 'Венера—Сатурн':
+            synthesis.append(f'Долгосрочность поддерживает связь {pair}: чувства здесь проверяются поступками, ответственностью и готовностью вкладываться.')
+        elif pair == 'Юпитер—Нептун' or pair == 'Нептун—Юпитер':
+            synthesis.append(f'В связи {pair} много мечтаний и планов: вдохновение помогает сближаться, но важные обещания лучше проверять сроками и фактами.')
+        elif pair == 'Плутон—Юпитер' or pair == 'Юпитер—Плутон':
+            synthesis.append(f'Связь {pair} способна заметно менять планы и представление о будущем, поэтому крупные решения лучше принимать после спокойного обсуждения.')
+        elif pair == 'Плутон—Сатурн' or pair == 'Сатурн—Плутон':
+            synthesis.append(f'Связь {pair} делает особенно заметными правила, ответственность и вопрос контроля: вам важно заранее договариваться о границах.')
+        else:
+            synthesis.append(f'Связь {pair} — один из заметных элементов вашей синастрии: она влияет на тему «{d["topic_label"]}» и дополняется другими сильными контактами.')
+    if not synthesis:
+        synthesis.append('Главная динамика пары складывается из нескольких разных тем: притяжения, общения, эмоциональной реакции и способов договариваться.')
+    synthesis.append('В целом устойчивость этой связи лучше оценивать не по одному сильному аспекту, а по тому, как вы действуете после разногласий, делите ответственность и соблюдаете договорённости.')
+    sections.append({'id':'synthesis','title':'✨ Синтез','text':' '.join(synthesis[:6]),'items':[]})
 
-    # Практический финал — не повторяет карточки аспектов.
     advice=[]
     if frozenset(('Меркурий','Марс')) in pairset: advice.append('В споре обсуждайте одну конкретную ситуацию и не вытаскивайте сразу старые претензии.')
     if frozenset(('Венера','Плутон')) in pairset: advice.append('Не проверяйте чувства через ревность, контроль телефона или попытки ограничить общение.')
@@ -916,7 +971,10 @@ def build_report(calc: dict[str, Any]) -> dict[str, Any]:
     details=[_detail(a,n1,n2,calc=calc) for a in all_aspects]
     featured=featured_aspects(calc,7)
     featured_details=[_detail(a,n1,n2,calc=calc) for a in featured]
-    compact=[d for d in details if d not in featured_details]
+    def _aspect_key(a):
+        return (str(a.get('person1_planet','')), str(a.get('person2_planet','')), str(a.get('aspect','')), round(_orb(a), 8))
+    featured_keys={_aspect_key(a) for a in featured}
+    compact=[_detail(a,n1,n2,calc=calc) for a in all_aspects if _aspect_key(a) not in featured_keys]
     scores=score_topics(calc)
     angle_count=len(calc.get('angle_aspects',[]))
     return {
@@ -934,7 +992,7 @@ def build_report(calc: dict[str, Any]) -> dict[str, Any]:
           'house_system':'Плацидус', 'rectification':False,
           'synastry_orbs':{'Солнце':8.0,'Луна':8.0,'Меркурий':6.0,'Венера':6.0,'Марс':6.0,'Юпитер':5.0,'Сатурн':5.0,'Уран':4.0,'Нептун':4.0,'Плутон':4.0},
           'angle_orb':3.0,
-          'orb_factor':'до 1° — максимальная точность; 1–2° — очень сильная; 2–4° — заметная; 4–6° — рабочая; 7°+ — слабые и только в полном списке',
+          'orb_factor':'до 2° — высокая сила; 2–4° — заметная; 4–6° — умеренная; больше 6° — слабая. В топ-7 попадают самые точные и весомые связи.',
           'top_aspects':7,
           'all_aspects':'7 главных — подробно; остальные — коротким списком',
       },
