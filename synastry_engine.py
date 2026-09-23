@@ -778,6 +778,8 @@ HOUSE_MEANINGS={
 
 def _house_interpretation(h:int, planets:list[str], planet_owner:str, house_owner:str)->str:
     """Short, planet-specific house interpretation with correct name cases."""
+    owner_nom=_case(planet_owner,'nom')
+    owner_nom=_case(planet_owner,'nom')
     owner_gen=_case(planet_owner,'gen')
     owner_ins=_case(planet_owner,'ins')
     owner_dat=_case(planet_owner,'dat')
@@ -982,6 +984,8 @@ def build_report(calc: dict[str, Any]) -> dict[str, Any]:
       'aspect_count':len(calc.get('aspects',[])),
       'planet_aspect_count':len(calc.get('aspects',[])),
       'angle_aspect_count':angle_count,
+      'angle_selected_count':sum(1 for a in calc.get('angle_aspects',[]) if _orb(a) <= 3.0),
+      'angle_excluded_count':sum(1 for a in calc.get('angle_aspects',[]) if _orb(a) > 3.0),
       'selected_count':len(details),
       'scores':{k:round(v,1) for k,v in scores.items()},
       'featured_aspects':featured_details,
