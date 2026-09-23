@@ -898,33 +898,6 @@ def build_sections(calc: dict[str, Any]) -> list[dict[str, Any]]:
             if text and text not in highlights: highlights.append(text)
         sections.append({'id':topic,'title':title,'text':base+' '+' '.join(highlights),'items':[]})
 
-    grouped=[]
-    for bucket,planet_owner,house_owner in [('overlays_1_in_2',n1,n2),('overlays_2_in_1',n2,n1)]:
-        by_house=defaultdict(list)
-        for x in calc.get(bucket,[]):
-            h=int(x.get('house') or 0)
-            if h in HOUSE_MEANINGS: by_house[h].append(str(x.get('planet','')))
-        for h, planets in by_house.items():
-            grouped.append((h,planet_owner,house_owner,list(dict.fromkeys(planets))))
-    by_category=defaultdict(list)
-    for h,po,ho,planets in grouped:
-        cat=next((k for k,v in HOUSE_GROUPS.items() if h in v),'Другие сферы')
-        by_category[cat].append((h,po,ho,_house_interpretation(h,planets,po,ho)))
-    if by_category:
-        house_sections=[]
-        order=('Быт и семья','Романтика и дети','Доверие и деньги','Карьера и статус','Общение и поездки','Мировоззрение, обучение и дальние поездки','Друзья и общие планы','Личное влияние')
-        for cat in order:
-            vals=by_category.get(cat,[])
-            if not vals: continue
-            subs=[]
-            for h,po,ho,text_value in vals:
-                planet_names = [x for x in grouped if x[0] == h and x[1] == po and x[2] == ho]
-                planets = planet_names[0][3] if planet_names else []
-                planet_label = ', '.join(planets) if planets else 'Планеты'
-                ho_gen = _case(ho, 'gen')
-                subs.append({'title':f'{planet_label} {_case(po, "gen")} в {h}-м доме {ho_gen}','text':text_value})
-            house_sections.append({'id':'house_'+str(len(house_sections)),'title':cat,'text':'','items':[],'subsections':subs})
-        sections.append({'id':'daily','title':'🏠 Как отношения проявляются в жизни','text':'Здесь показано, в каких сферах жизни вы сильнее всего влияете друг на друга: дом и семья, романтика, деньги, общение, карьера, обучение, путешествия и общие планы.','items':[],'subsections':house_sections})
 
     angle_details=[_angle_detail(a,n1,n2) for a in calc.get('angle_aspects',[]) if _orb(a) <= 3.0]
     angle_details.sort(key=lambda x:float(x.get('weight',0)), reverse=True)
