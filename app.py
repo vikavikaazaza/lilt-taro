@@ -944,59 +944,70 @@ def auth_ok(request:Request):
     except: return False
 
 def admin_page():
-    s=db.stats(); us=db.users(); tops=db.top_payers(); src=db.source_stats(); reads=db.recent_readings(); pays=db.recent_payments()
-    rows=''.join(f'<tr><td><a href="/admin/user/{u["id"]}" style="color:#f5e9c8;font-weight:bold;text-decoration:none">{u["id"]}</a></td><td><a href="/admin/user/{u["id"]}" style="color:#d7bb73;text-decoration:none">{html.escape(u["name"] or "")}</a></td><td>@{html.escape(u["username"] or "—")}</td><td>{int(u["requests"])+int(u["paid_requests"])}</td><td>{int(u["requests"])}</td><td>{int(u["paid_requests"])}</td><td>{"ВКЛ" if has_manual_subscription(u["id"]) else "—"}</td><td>{html.escape(u["source"] or "telegram")}</td><td>{html.escape(u["last_seen"] or "")}</td><td><a href="/admin/user/{u["id"]}" style="color:#d7bb73">Открыть</a></td></tr>' for u in us)
+    s=db.stats(); us=db.users(limit=1000); tops=db.top_payers(); src=db.source_stats();
+    analytics=db.dashboard_analytics()
+    rows=[]
+    for u in us:
+        uid=int(u['id'])
+        name=html.escape(u['name'] or '')
+        username=html.escape(u['username'] or '—')
+        source=html.escape(u['source'] or 'telegram')
+        last=html.escape((u['last_seen'] or '')[:19].replace('T',' '))
+        total=int(u['requests'])+int(u['paid_requests'])
+        rows.append(f'''<tr class="user-row" data-search="{html.escape((u['name'] or '')+' '+(u['username'] or '')+' '+str(uid), quote=True).lower()}" data-active="{html.escape((u['last_seen'] or ''))}">
+          <td><a href="/admin/user/{uid}" class="user-name">{name or uid}</a><div class="sub">ID {uid} · @{username}</div></td>
+          <td>{total}</td><td>{int(u['paid_requests'])}</td><td>{'ВКЛ' if has_manual_subscription(uid) else '—'}</td>
+          <td>{source}</td><td>{last}</td><td><a href="/admin/user/{uid}" class="open-btn">Открыть</a></td>
+        </tr>''')
     top=''.join(f'<tr><td>{html.escape(x["name"] or "")}</td><td>@{html.escape(x["username"] or "—")}</td><td>{x["total_spent"]} ₽</td></tr>' for x in tops)
     sources=''.join(f'<span class="pill">{html.escape(x["source"])}: {x["n"]}</span>' for x in src)
-    rrows=''.join(f'<tr><td>{r["created_at"][:19].replace("T"," ")}</td><td>{html.escape(r["name"] or str(r["user_id"]))}</td><td>{html.escape(DECK_NAMES.get(r["deck"],r["deck"]))}</td><td>{html.escape(r["question"][:120])}</td></tr>' for r in reads)
-    prows=''.join(f'<tr><td>{p["created_at"][:19].replace("T"," ")}</td><td>{html.escape(p["name"] or str(p["user_id"]))}</td><td>{p["amount"]} ₽</td><td>{p["requests"]}</td><td>{html.escape(p["status"] or "")}</td></tr>' for p in pays)
     return f'''<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="theme-color" content="#090816"><title>Lilit Admin</title><style>
-*{{box-sizing:border-box}}body{{margin:0;background:#090816;color:#f5e9c8;font:14px Arial,sans-serif;-webkit-text-size-adjust:100%}}.wrap{{max-width:1250px;margin:auto;padding:28px}}h1{{font-size:30px;font-weight:500;letter-spacing:1px;margin:0 0 8px}}h2{{font-weight:500;margin:0}}.grid{{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}}.card,section{{background:#15132a;border:1px solid #302a52;border-radius:16px;padding:18px;box-shadow:0 10px 30px #0003}}.card{{min-width:0}}.num{{font-size:28px;margin-top:8px}}table{{width:100%;border-collapse:collapse;min-width:760px}}.scroll{{overflow:auto;-webkit-overflow-scrolling:touch}}td,th{{padding:10px;border-bottom:1px solid #292440;text-align:left;white-space:nowrap;vertical-align:top}}input,select,textarea,button{{font:inherit;padding:11px 12px;border-radius:10px;border:1px solid #4b416e;background:#0d0c1c;color:#fff}}select{{min-height:44px}}textarea{{width:100%;min-height:110px;resize:vertical}}button{{cursor:pointer;background:#d7bb73;color:#171225;font-weight:bold;min-height:44px}}.pill{{display:inline-block;padding:8px 12px;border:1px solid #4b416e;border-radius:999px;margin:4px}}form.row{{display:flex;gap:10px;flex-wrap:wrap;align-items:center}}form.row input,form.row select{{max-width:100%}}.muted{{color:#aaa2bc;line-height:1.5}}.section-title{{display:flex;align-items:center;justify-content:space-between;gap:12px}}.mobile-note{{display:none}}
-@media(max-width:900px){{.wrap{{padding:18px 14px 28px}}h1{{font-size:25px}}.grid{{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}}.grid .card{{padding:14px}}.grid .num{{font-size:24px}}section{{padding:15px;border-radius:14px}}form.row{{flex-direction:column;align-items:stretch}}form.row input,form.row select,form.row button{{width:100%;max-width:none}}textarea{{min-height:130px}}.mobile-note{{display:block;font-size:12px;margin-top:6px}}}}
-@media(max-width:640px){{.wrap{{padding:12px 10px 24px}}h1{{font-size:22px;line-height:1.2}}h2{{font-size:18px}}.grid{{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}}.grid .card{{padding:12px;min-height:76px}}.grid .num{{font-size:21px}}.card,section{{border-radius:12px}}.section-title{{align-items:flex-start;flex-direction:column}}.pill{{padding:7px 10px;margin:3px}}.users-table{{display:block;min-width:0}}.users-table thead{{display:none}}.users-table tbody,.users-table tr,.users-table td{{display:block;width:100%}}.users-table tr{{background:#0f0d20;border:1px solid #302a52;border-radius:12px;margin:0 0 10px;padding:8px}}.users-table td{{border:0;padding:7px 8px;white-space:normal;display:flex;justify-content:space-between;gap:12px;align-items:flex-start}}.users-table td::before{{color:#aaa2bc;font-size:12px;flex:0 0 42%;content:""}}.users-table td:nth-child(1)::before{{content:"ID"}}.users-table td:nth-child(2)::before{{content:"Имя"}}.users-table td:nth-child(3)::before{{content:"Ник"}}.users-table td:nth-child(4)::before{{content:"Всего"}}.users-table td:nth-child(5)::before{{content:"Бесплатные"}}.users-table td:nth-child(6)::before{{content:"Оплаченные"}}.users-table td:nth-child(7)::before{{content:"Ручная подписка"}}.users-table td:nth-child(8)::before{{content:"Источник"}}.users-table td:nth-child(9)::before{{content:"Последний вход"}}.users-table td:nth-child(10)::before{{content:"Карточка"}}.users-table td:nth-child(10){{justify-content:flex-end;padding-top:10px}}.users-table td:nth-child(10)::before{{display:none}}.users-table td:nth-child(10) a{{display:block;width:100%;text-align:center;background:#d7bb73;color:#171225!important;border-radius:9px;padding:10px;text-decoration:none!important;font-weight:bold}}.compact-table{{display:block;min-width:0}}.compact-table thead{{display:none}}.compact-table tbody,.compact-table tr,.compact-table td{{display:block;width:100%}}.compact-table tr{{padding:8px 0;border-bottom:1px solid #292440}}.compact-table td{{border:0;padding:4px 0;white-space:normal;line-height:1.45}}.compact-table.payments td:nth-child(1)::before{{content:"Дата: "}}.compact-table.payments td:nth-child(2)::before{{content:"Сумма: "}}.compact-table.payments td:nth-child(3)::before{{content:"Запросов: "}}.compact-table.payments td:nth-child(4)::before{{content:"Статус: "}}.compact-table.readings td:nth-child(1)::before{{content:"Дата: "}}.compact-table.readings td:nth-child(2)::before{{content:"Клиент: "}}.compact-table.readings td:nth-child(3)::before{{content:"Колода: "}}.compact-table.readings td:nth-child(4)::before{{content:"Вопрос: "}}}}
-</style></head><body><div class="wrap"><h1>Лилит · Панель управления</h1><p class="muted">Один сервер · одна база SQLite · бот + Mini App + платежи</p><div class="grid"><div class="card">Пользователи<div class="num">{s['users']}</div></div><div class="card">Активные 7 дней<div class="num">{s['active']}</div></div><div class="card">Расклады<div class="num">{s['questions']}</div></div><div class="card">Платежи<div class="num">{s['payments']}</div></div><div class="card">Выручка<div class="num">{s['revenue']} ₽</div></div></div><br>
-<section><h2>Начислить запросы</h2>
-<form class="row" method="post" action="/admin/add-requests"><input name="uid" placeholder="Telegram ID" required><input name="amount" type="number" min="1" placeholder="Количество" required><button>Начислить пользователю</button></form>
-<hr style="border:0;border-top:1px solid #292440;margin:16px 0">
-<form class="row" method="post" action="/admin/add-requests-all" onsubmit="return window.confirm('Начислить запросы всем пользователям?')"><input name="amount" type="number" min="1" value="1" placeholder="Количество" required><button>Начислить всем пользователям</button></form>
-<p class="muted">Это добавляет запросы на общий баланс пользователя. Например, 1 запрос = один бесплатный расклад на 3 карты для пользователя без активной платной подписки.</p>
-</section><br>
-<section><h2>Ручная подписка</h2><p class="muted">Включает человеку режим расклада на 9 карт. Оплата не требуется. Запросы при этом расходуются как обычно.</p><form class="row" method="post" action="/admin/set-subscription"><input name="uid" placeholder="Telegram ID" required><button name="enabled" value="1">Включить подписку</button><button name="enabled" value="0">Отключить подписку</button></form></section><br>
-<section><h2>📢 Рассылка</h2>
-<p class="muted">Можно отправить сообщение одному пользователю, нескольким выбранным пользователям или готовой группе. Максимум 4096 символов.</p>
-<form method="post" action="/admin/broadcast" onsubmit="return window.confirm('Отправить это сообщение выбранным пользователям?')">
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-<div>
-<label>Кому</label><br>
-<select name="segment" id="broadcast-segment" onchange="toggleIds()" required>
-<option value="selected">Конкретные пользователи</option>
-<option value="all">Все пользователи</option>
-<option value="sambot">Пользователи из Sambot</option>
-<option value="with_requests">У кого есть запросы</option>
-<option value="subscribed">С активной подпиской / платными запросами</option>
-<option value="active_7d">Активные за последние 7 дней</option>
-<option value="no_readings">Кто ещё не делал расклад</option>
-</select>
+*{{box-sizing:border-box}}body{{margin:0;background:#090816;color:#f5e9c8;font:14px Arial,sans-serif}}.wrap{{max-width:1320px;margin:auto;padding:26px}}h1{{font-size:30px;font-weight:500;margin:0 0 6px}}h2{{font-weight:500;margin:0}}.muted{{color:#aaa2bc;line-height:1.5}}.grid{{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}}.card,section{{background:#15132a;border:1px solid #302a52;border-radius:16px;padding:17px;box-shadow:0 10px 30px #0003}}.num{{font-size:27px;margin-top:7px}}.label{{color:#aaa2bc;font-size:12px}}.insights{{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:12px}}.insight{{background:#0d0c1c;border:1px solid #292440;border-radius:12px;padding:13px}}.insight b{{display:block;margin-bottom:5px}}.danger{{border-color:#69445a}}.good{{border-color:#49624f}}table{{width:100%;border-collapse:collapse}}td,th{{padding:10px;border-bottom:1px solid #292440;text-align:left;vertical-align:top}}input,select,textarea,button{{font:inherit;padding:11px 12px;border-radius:10px;border:1px solid #4b416e;background:#0d0c1c;color:#fff}}select{{min-height:44px}}textarea{{width:100%;min-height:120px;resize:vertical}}button{{cursor:pointer;background:#d7bb73;color:#171225;font-weight:bold;min-height:44px}}form.row{{display:flex;gap:10px;flex-wrap:wrap;align-items:center}}.pill{{display:inline-block;padding:8px 12px;border:1px solid #4b416e;border-radius:999px;margin:4px}}.toolbar{{display:grid;grid-template-columns:minmax(240px,1fr) 180px 180px;gap:10px;margin:14px 0}}.users-table{{min-width:760px}}.user-row .user-name{{color:#f5e9c8;font-weight:bold;text-decoration:none}}.sub{{font-size:12px;color:#aaa2bc;margin-top:4px}}.open-btn{{display:inline-block;color:#171225;background:#d7bb73;border-radius:8px;padding:8px 11px;text-decoration:none;font-weight:bold}}.broadcast-grid{{display:grid;grid-template-columns:1fr 1fr;gap:12px}}.broadcast-preview{{background:#0d0c1c;border:1px solid #292440;border-radius:12px;padding:13px;white-space:pre-wrap;min-height:80px}}.count{{font-weight:bold;color:#d7bb73}}.arrow-btn{{display:flex;align-items:center;gap:8px;background:#0d0c1c;color:#f5e9c8;border:1px solid #4b416e;width:100%;justify-content:center;margin-bottom:12px}}.dialogue{{display:flex;flex-direction:column;gap:10px;max-height:680px;overflow:auto;padding-right:4px}}.msg{{max-width:82%}}.msg.user{{align-self:flex-end}}.msg.bot{{align-self:flex-start}}.meta{{font-size:12px;color:#aaa2bc;margin-bottom:4px}}.bubble{{white-space:pre-wrap;line-height:1.45;border-radius:14px;padding:12px 14px;background:#211d38}}.msg.user .bubble{{background:#2b2446}}.loading{{opacity:.6}}.section-title{{display:flex;align-items:center;justify-content:space-between;gap:12px}}
+@media(max-width:950px){{.grid{{grid-template-columns:repeat(2,1fr)}}.insights{{grid-template-columns:1fr}}.broadcast-grid,.toolbar{{grid-template-columns:1fr}}.wrap{{padding:16px 12px 24px}}}}
+@media(max-width:640px){{h1{{font-size:22px}}.grid{{gap:8px}}.card,section{{border-radius:12px;padding:13px}}.users-table{{display:block;min-width:0}}.users-table thead{{display:none}}.users-table tbody,.users-table tr,.users-table td{{display:block;width:100%}}.users-table tr{{background:#0f0d20;border:1px solid #302a52;border-radius:12px;margin-bottom:9px;padding:7px}}.users-table td{{border:0;padding:6px;display:flex;justify-content:space-between;gap:12px;white-space:normal}}.users-table td::before{{color:#aaa2bc;font-size:12px}}.users-table td:nth-child(1)::before{{content:"Клиент"}}.users-table td:nth-child(2)::before{{content:"Запросы"}}.users-table td:nth-child(3)::before{{content:"Оплачено"}}.users-table td:nth-child(4)::before{{content:"Подписка"}}.users-table td:nth-child(5)::before{{content:"Источник"}}.users-table td:nth-child(6)::before{{content:"Активность"}}.users-table td:nth-child(7)::before{{content:""}}.users-table td:nth-child(7){{justify-content:flex-end}}.msg{{max-width:95%}}}}
+</style></head><body><div class="wrap">
+<h1>Лилит · Панель управления</h1><p class="muted">Клиенты, активность, продажи и слабые места — на одном экране.</p>
+<div class="grid">
+<div class="card"><div class="label">👥 Клиенты</div><div class="num">{s['users']}</div></div>
+<div class="card"><div class="label">🟢 Активные 24ч</div><div class="num">{analytics['active_24']}</div></div>
+<div class="card"><div class="label">🟢 Активные 7 дней</div><div class="num">{s['active']}</div></div>
+<div class="card"><div class="label">💳 Конверсия в оплату</div><div class="num">{analytics['conversion']:.1f}%</div></div>
+<div class="card"><div class="label">💰 Выручка 30 дней</div><div class="num">{analytics['revenue_30']} ₽</div></div>
 </div>
-<div id="ids-box">
-<label>Telegram ID</label><br>
-<input name="ids" id="broadcast-ids" style="width:100%;box-sizing:border-box" placeholder="123456789, 987654321">
-</div>
-<div style="grid-column:1/-1">
-<label>Сообщение</label><br>
-<textarea name="text" id="broadcast-text" maxlength="4096" placeholder="Напиши сообщение клиентам..." required></textarea>
-</div>
-<div style="grid-column:1/-1"><button type="submit">Отправить сообщение</button></div>
-</div>
-</form>
-<p class="muted">Для нескольких пользователей ID можно вставить через запятую, пробел или с новой строки.</p>
-</section><br>
-<section><h2>Источники</h2>{sources}</section><br>
-<section><div class="section-title"><h2>Последние вопросы</h2><span class="mobile-note">Новые вопросы отображаются сверху</span></div><div class="scroll"><table class="compact-table readings"><tr><th>Дата</th><th>Клиент</th><th>Колода</th><th>Вопрос</th></tr>{rrows}</table></div></section><br>
-<section><div class="section-title"><h2>Платежи</h2><span class="mobile-note">Новые оплаты отображаются сверху</span></div><div class="scroll"><table class="compact-table payments"><tr><th>Дата</th><th>Клиент</th><th>Сумма</th><th>Запросы</th><th>Статус</th></tr>{prows}</table></div></section><br>
-<section><h2>Клиенты с оплатами</h2><div class="scroll"><table><tr><th>Имя</th><th>Ник</th><th>Всего</th></tr>{top}</table></div></section><br>
-<section><div class="section-title"><h2>Пользователи</h2><span class="mobile-note">Нажми «Открыть», чтобы посмотреть карточку клиента</span></div><div class="scroll"><table class="users-table"><tr><th>ID</th><th>Имя</th><th>Ник</th><th>Всего</th><th>Бесплатные</th><th>Оплаченные</th><th>Ручная подписка</th><th>Источник</th><th>Последний вход</th><th>Карточка</th></tr>{rows}</table></div></section></div></body></html>'''
-
+<section style="margin-top:12px"><h2>📊 Что происходит</h2><div class="insights">
+<div class="insight {'good' if analytics['repeat_rate']>=30 else 'danger'}"><b>Повторные клиенты</b>{analytics['repeat_users']} · {analytics['repeat_rate']:.1f}% активной базы</div>
+<div class="insight {'good' if analytics['paid_users'] else ''}"><b>Платящие клиенты</b>{analytics['paid_users']} · средний чек {analytics['avg_check']} ₽</div>
+<div class="insight {'danger' if analytics['inactive_30'] else 'good'}"><b>Неактивны 30+ дней</b>{analytics['inactive_30']} клиентов</div>
+</div></section>
+<section style="margin-top:12px"><h2>⚠️ Где слабое место</h2><div class="insights">
+<div class="insight"><b>Доход</b>За 30 дней: <span class="count">{analytics['revenue_30']} ₽</span>. За 7 дней: <span class="count">{analytics['revenue_7']} ₽</span>.</div>
+<div class="insight"><b>Возврат</b>Повторно взаимодействовали: <span class="count">{analytics['repeat_users']}</span> клиентов.</div>
+<div class="insight"><b>Потерянная база</b><span class="count">{analytics['inactive_30']}</span> клиентов не проявляли активности больше месяца.</div>
+</div></section>
+<section style="margin-top:12px"><h2>📢 Рассылка</h2><p class="muted">Выбери сегмент, посмотри размер аудитории и отправь сообщение. Максимум 4096 символов.</p>
+<form method="post" action="/admin/broadcast" onsubmit="return confirmBroadcast()"><div class="broadcast-grid">
+<div><label>Кому</label><select name="segment" id="broadcast-segment" onchange="toggleIds(); updateBroadcastCount()" required>
+<option value="selected">Конкретные пользователи</option><option value="all">Все пользователи</option><option value="sambot">Пользователи из Sambot</option><option value="with_requests">У кого есть запросы</option><option value="subscribed">С активной подпиской / платными запросами</option><option value="active_7d">Активные за последние 7 дней</option><option value="no_readings">Кто ещё не делал расклад</option></select></div>
+<div id="ids-box"><label>Telegram ID</label><input name="ids" id="broadcast-ids" style="width:100%" placeholder="123456789, 987654321" oninput="updateBroadcastCount()"></div>
+<div><label>Сообщение</label><textarea name="text" id="broadcast-text" maxlength="4096" placeholder="Напиши сообщение клиентам..." required oninput="updateBroadcastPreview()"></textarea><div class="muted"><span id="broadcast-length">0</span>/4096 символов</div></div>
+<div><label>Предпросмотр</label><div id="broadcast-preview" class="broadcast-preview">Текст появится здесь.</div><p class="muted">Получателей: <span id="broadcast-count" class="count">—</span></p></div>
+</div><button type="submit" style="margin-top:12px;width:100%">📤 Отправить рассылку</button></form></section>
+<section style="margin-top:12px"><div class="section-title"><h2>👥 Клиенты</h2><span class="muted">Активные автоматически сверху</span></div>
+<div class="toolbar"><input id="client-search" placeholder="🔎 Поиск по имени, @username или Telegram ID"><select id="client-filter"><option value="all">Все клиенты</option><option value="paid">Есть оплаты</option><option value="active7">Активные 7 дней</option><option value="inactive30">Неактивны 30+ дней</option><option value="subscribed">Есть подписка</option></select><select id="client-sort"><option value="activity">Последняя активность</option><option value="payments">Оплаты</option><option value="requests">Запросы</option></select></div>
+<div class="scroll"><table class="users-table" id="clients-table"><thead><tr><th>Клиент</th><th>Запросы</th><th>Оплачено</th><th>Подписка</th><th>Источник</th><th>Последняя активность</th><th></th></tr></thead><tbody>{''.join(rows)}</tbody></table></div><p id="client-empty" class="muted" style="display:none">Клиенты не найдены.</p></section>
+<section style="margin-top:12px"><h2>Источники</h2>{sources}</section>
+<section style="margin-top:12px"><h2>💰 Клиенты с оплатами</h2><div class="scroll"><table><tr><th>Имя</th><th>Ник</th><th>Всего</th></tr>{top}</table></div></section>
+<section style="margin-top:12px"><h2>Начислить запросы</h2><form class="row" method="post" action="/admin/add-requests"><input name="uid" placeholder="Telegram ID" required><input name="amount" type="number" min="1" placeholder="Количество" required><button>Начислить</button></form><hr style="border:0;border-top:1px solid #292440;margin:16px 0"><form class="row" method="post" action="/admin/add-requests-all" onsubmit="return confirm('Начислить запросы всем пользователям?')"><input name="amount" type="number" min="1" value="1" required><button>Начислить всем</button></form></section>
+<section style="margin-top:12px"><h2>Ручная подписка</h2><form class="row" method="post" action="/admin/set-subscription"><input name="uid" placeholder="Telegram ID" required><button name="enabled" value="1">Включить</button><button name="enabled" value="0">Отключить</button></form></section>
+</div><script>
+function toggleIds(){{const s=document.getElementById('broadcast-segment').value;document.getElementById('ids-box').style.display=s==='selected'?'block':'none';}}
+function updateBroadcastPreview(){{const t=document.getElementById('broadcast-text').value;document.getElementById('broadcast-length').textContent=t.length;document.getElementById('broadcast-preview').textContent=t||'Текст появится здесь.';}}
+async function updateBroadcastCount(){{const s=document.getElementById('broadcast-segment').value;const ids=document.getElementById('broadcast-ids').value;const el=document.getElementById('broadcast-count');if(s==='selected'){{const n=ids.split(/[\\s,;]+/).filter(Boolean).length;el.textContent=n;return}};try{{const r=await fetch('/admin/broadcast/count?segment='+encodeURIComponent(s));const j=await r.json();el.textContent=j.count}}catch(e){{el.textContent='—'}}}}
+function confirmBroadcast(){{const n=document.getElementById('broadcast-count').textContent;const t=document.getElementById('broadcast-text').value.trim();if(!t)return false;return confirm('Отправить рассылку '+(n==='—'?'':n+' пользователям')+'?')}}
+function filterClients(){{const q=document.getElementById('client-search').value.trim().toLowerCase();const f=document.getElementById('client-filter').value;const rows=[...document.querySelectorAll('.user-row')];let shown=0;const now=Date.now();rows.forEach(r=>{{const text=(r.dataset.search||'').toLowerCase();const last=r.dataset.active||'';const age=(now-new Date(last).getTime())/86400000;let ok=text.includes(q);if(f==='paid')ok=ok&&parseInt(r.children[2].textContent)>0;if(f==='active7')ok=ok&&age<=7;if(f==='inactive30')ok=ok&&age>30;if(f==='subscribed')ok=ok&&r.children[3].textContent.trim()!=='—';r.style.display=ok?'':'none';if(ok)shown++}});document.getElementById('client-empty').style.display=shown?'none':'block'}}
+function sortClients(){{const tbody=document.querySelector('#clients-table tbody');const rows=[...tbody.querySelectorAll('.user-row')];const mode=document.getElementById('client-sort').value;rows.sort((a,b)=>{{if(mode==='activity')return new Date(b.dataset.active)-new Date(a.dataset.active);if(mode==='payments')return parseInt(b.children[2].textContent)-parseInt(a.children[2].textContent);return parseInt(b.children[1].textContent)-parseInt(a.children[1].textContent)}});rows.forEach(r=>tbody.appendChild(r));filterClients()}}
+document.getElementById('client-search').addEventListener('input',filterClients);document.getElementById('client-filter').addEventListener('change',filterClients);document.getElementById('client-sort').addEventListener('change',sortClients);toggleIds();updateBroadcastPreview();updateBroadcastCount();
+</script></body></html>'''
 @app.get('/admin/user/{uid}',response_class=HTMLResponse)
 async def admin_user(request:Request, uid:int):
     if not auth_ok(request):
@@ -1004,7 +1015,7 @@ async def admin_user(request:Request, uid:int):
     u=db.get(uid)
     if not u:
         raise HTTPException(404,'Пользователь не найден')
-    messages=db.user_messages(uid)
+    messages=db.user_messages_latest(uid,40)
     readings=db.user_readings(uid)
     payments=db.user_payments(uid)
     events=db.user_events(uid)
@@ -1021,7 +1032,7 @@ async def admin_user(request:Request, uid:int):
         who='Клиент' if msg['role']=='user' else 'Лилит'
         dt=html.escape((msg['created_at'] or '')[:19].replace('T',' '))
         body=html.escape(msg['text'] or '')
-        chat_rows.append(f'<div class="msg {cls}"><div class="meta"><b>{who}</b> · {dt}</div><div class="bubble">{body}</div></div>')
+        chat_rows.append(f'<div class="msg {cls}" data-message-id="{int(msg["id"])}"><div class="meta"><b>{who}</b> · {dt}</div><div class="bubble">{body}</div></div>')
     chat_html=''.join(chat_rows) if chat_rows else '<p class="muted">Сообщений пока нет. Полный журнал начнёт заполняться после установки этой версии.</p>'
 
     reading_rows=[]
@@ -1066,13 +1077,51 @@ async def admin_user(request:Request, uid:int):
 *{{box-sizing:border-box}}body{{margin:0;background:#090816;color:#f5e9c8;font:14px Arial,sans-serif;-webkit-text-size-adjust:100%}}.wrap{{max-width:1100px;margin:auto;padding:24px}}a{{color:#d7bb73}}.back{{display:inline-block;margin-bottom:18px;min-height:42px;padding-top:10px}}.hero{{background:#15132a;border:1px solid #302a52;border-radius:16px;padding:20px;box-shadow:0 10px 30px #0003}}.grid{{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:16px}}.stat{{background:#0d0c1c;border:1px solid #292440;border-radius:12px;padding:12px}}.muted{{color:#aaa2bc;line-height:1.5}}section{{background:#15132a;border:1px solid #302a52;border-radius:16px;padding:18px;margin-top:18px;box-shadow:0 10px 30px #0003}}h1,h2{{font-weight:500}}.dialogue{{display:flex;flex-direction:column;gap:10px}}.msg{{max-width:82%}}.msg.user{{align-self:flex-end}}.msg.bot{{align-self:flex-start}}.meta{{font-size:12px;color:#aaa2bc;margin-bottom:4px}}.bubble{{white-space:pre-wrap;line-height:1.45;border-radius:14px;padding:12px 14px}}.msg.user .bubble{{background:#2b2446}}.msg.bot .bubble{{background:#211d38}}.reading{{border:1px solid #302a52;border-radius:14px;padding:14px;margin-top:10px}}.answer{{white-space:pre-wrap;line-height:1.5;margin-top:8px;background:#0d0c1c;border-radius:10px;padding:12px}}table{{width:100%;border-collapse:collapse}}td,th{{padding:9px;border-bottom:1px solid #292440;text-align:left;vertical-align:top}}@media(max-width:800px){{.wrap{{padding:16px 12px 24px}}.hero,section{{border-radius:13px;padding:15px}}.grid{{grid-template-columns:repeat(2,1fr);gap:8px}}.msg{{max-width:94%}}.reading{{padding:12px}}.answer{{padding:10px}}table{{min-width:0}}}}@media(max-width:520px){{h1{{font-size:22px;line-height:1.2}}h2{{font-size:18px}}.stat{{padding:10px;font-size:13px}}.hero p{{word-break:break-word}}.bubble{{padding:10px 11px}}}} </style></head><body><div class="wrap">
 <a class="back" href="/admin">← Вернуться в дашборд</a>
 <div class="hero"><h1>{name}</h1><p>{username} · Telegram ID: <b>{uid}</b></p><div class="grid"><div class="stat">Всего запросов<br><b>{total}</b></div><div class="stat">Бесплатные<br><b>{int(u["requests"])}</b></div><div class="stat">Оплаченные<br><b>{int(u["paid_requests"])}</b></div><div class="stat">Ручная подписка<br><b>{manual}</b></div></div><p class="muted">Источник: {html.escape(u["source"] or "telegram")} · Первый вход: {html.escape((u["first_seen"] or "")[:19].replace("T"," "))} · Последний вход: {html.escape((u["last_seen"] or "")[:19].replace("T"," "))}</p></div>
-<section><h2>💬 Диалог с ботом</h2><div class="dialogue">{chat_html}</div></section>
+<section><div class="section-title"><h2>💬 Диалог с ботом</h2><span class="muted">Храним только последние 30 дней</span></div><button id="older-btn" class="arrow-btn" onclick="loadOlder()">↑ Показать более ранние сообщения</button><div id="dialogue" class="dialogue">{chat_html}</div></section>
 <section><h2>🔮 История раскладов</h2><p class="muted">История раскладов сохраняется отдельно и включает записи, сделанные до включения полного журнала сообщений.</p>{readings_html}</section>
 <section><h2>🌌 Транзиты</h2>{transit_html}</section>
 <section><h2>💞 Синастрия</h2>{syn_html}</section>
 <section><h2>💳 Платежи</h2><table><tr><th>Дата</th><th>Сумма</th><th>Запросов</th><th>Статус</th></tr>{payments_html}</table></section>
 <section><h2>⚙️ События</h2><table><tr><th>Дата</th><th>Событие</th><th>Данные</th></tr>{events_html}</table></section>
-</div></body></html>'''
+<script>
+let loadingOlder=false;
+async function loadOlder(){{
+  if(loadingOlder)return;
+  const box=document.getElementById('dialogue'); const first=box.querySelector('[data-message-id]');
+  if(!first){{document.getElementById('older-btn').style.display='none';return}}
+  loadingOlder=true; const btn=document.getElementById('older-btn'); btn.classList.add('loading');
+  try{{
+    const r=await fetch('/admin/user/{uid}/messages?before_id='+first.dataset.messageId+'&limit=40');
+    const html=await r.text();
+    if(!html || html.includes('Ранних сообщений больше нет')){{btn.textContent='Ранних сообщений больше нет';btn.disabled=true;}}
+    else{{box.insertAdjacentHTML('afterbegin',html);}}
+  }}catch(e){{btn.textContent='Не удалось загрузить';}}
+  finally{{loadingOlder=false;btn.classList.remove('loading');}}
+}}
+</script></div></body></html>'''
+
+@app.get('/admin/user/{uid}/messages',response_class=HTMLResponse)
+async def admin_user_messages(request:Request, uid:int, before_id:int=0, limit:int=40):
+    if not auth_ok(request): raise HTTPException(401,'Unauthorized')
+    if not db.get(uid): raise HTTPException(404,'Пользователь не найден')
+    limit=max(1,min(int(limit),80))
+    msgs=db.user_messages_before(uid,before_id,limit) if before_id else db.user_messages_latest(uid,limit)
+    if not msgs:
+        return HTMLResponse('<div class="no-more">Ранних сообщений больше нет.</div>')
+    parts=[]
+    for msg in msgs:
+        cls='user' if msg['role']=='user' else 'bot'; who='Клиент' if msg['role']=='user' else 'Лилит'
+        dt=html.escape((msg['created_at'] or '')[:19].replace('T',' ')); body=html.escape(msg['text'] or '')
+        parts.append(f'<div class="msg {cls}" data-message-id="{int(msg["id"])}"><div class="meta"><b>{who}</b> · {dt}</div><div class="bubble">{body}</div></div>')
+    return HTMLResponse(''.join(parts))
+
+@app.get('/admin/broadcast/count')
+async def broadcast_count(request:Request, segment:str='all'):
+    if not auth_ok(request): raise HTTPException(401,'Unauthorized')
+    try: return JSONResponse({'count':len(_broadcast_targets(segment,'') )})
+    except ValueError as e: raise HTTPException(400,str(e))
+
+
 
 @app.get('/admin',response_class=HTMLResponse)
 async def admin(request:Request):
