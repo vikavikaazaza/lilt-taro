@@ -104,6 +104,8 @@ def init():
             # Old succeeded payments are treated as already credited to avoid double grants.
             # Old pending payments are marked uncredited so the new reconciliation can finish them.
             c.execute("UPDATE payments SET credited=0 WHERE status!='succeeded' OR status IS NULL")
+        # Remove dialogue messages older than one month; client records and business data remain.
+        c.execute("DELETE FROM messages WHERE datetime(created_at) < datetime('now','-1 month')")
 
 def now(): return datetime.now(timezone.utc).isoformat()
 
@@ -148,6 +150,21 @@ def log_message(uid, role, text, message_type='text', meta=''):
 def user_messages(uid, limit=2000):
     with conn() as c:
         return c.execute('SELECT * FROM messages WHERE user_id=? ORDER BY created_at ASC, id ASC LIMIT ?',(int(uid),int(limit))).fetchall()
+
+def user_messages_latest(uid, limit=40):
+    with conn() as c:
+        rows=c.execute('SELECT * FROM messages WHERE user_id=? ORDER BY id DESC LIMIT ?',(int(uid),int(limit))).fetchall()
+        return list(reversed(rows))
+
+def user_messages_before(uid, before_id, limit=40):
+    with conn() as c:
+        rows=c.execute('SELECT * FROM messages WHERE user_id=? AND id<? ORDER BY id DESC LIMIT ?',(int(uid),int(before_id),int(limit))).fetchall()
+        return list(reversed(rows))
+
+def cleanup_old_messages():
+    with conn() as c:
+        c.execute("DELETE FROM messages WHERE datetime(created_at) < datetime('now','-1 month')")
+        return c.execute('SELECT changes() n').fetchone()['n']
 
 def user_readings(uid, limit=500):
     with conn() as c:
@@ -324,6 +341,25 @@ def stats():
           'questions':c.execute('SELECT COUNT(*) n FROM readings').fetchone()['n'],
           'payments':c.execute("SELECT COUNT(*) n FROM payments WHERE status='succeeded'").fetchone()['n'],
           'revenue':c.execute("SELECT COALESCE(SUM(amount),0) n FROM payments WHERE status='succeeded'").fetchone()['n']}
+
+def dashboard_analytics():
+    with conn() as c:
+        active_24=c.execute("SELECT COUNT(*) n FROM users WHERE julianday(last_seen)>=julianday('now','-1 day')").fetchone()['n']
+        active_30=c.execute("SELECT COUNT(*) n FROM users WHERE julianday(last_seen)>=julianday('now','-30 days')").fetchone()['n']
+        paid_users=c.execute("SELECT COUNT(*) n FROM users WHERE total_spent>0 OR paid_requests>0 OR EXISTS (SELECT 1 FROM manual_subscriptions ms WHERE ms.user_id=users.id AND ms.enabled=1)").fetchone()['n']
+        repeat_users=c.execute("SELECT COUNT(*) n FROM (SELECT user_id FROM events GROUP BY user_id HAVING COUNT(*)>1)").fetchone()['n']
+        inactive_30=c.execute("SELECT COUNT(*) n FROM users WHERE julianday(last_seen)<julianday('now','-30 days')").fetchone()['n']
+        revenue_30=c.execute("SELECT COALESCE(SUM(amount),0) n FROM payments WHERE status='succeeded' AND julianday(created_at)>=julianday('now','-30 days')").fetchone()['n']
+        revenue_7=c.execute("SELECT COALESCE(SUM(amount),0) n FROM payments WHERE status='succeeded' AND julianday(created_at)>=julianday('now','-7 days')").fetchone()['n']
+        conversion=(paid_users / active_30 * 100) if active_30 else 0.0
+        repeat_rate=(repeat_users / active_30 * 100) if active_30 else 0.0
+        avg_check=(revenue_30 / paid_users) if paid_users else 0
+        return {
+            'active_24':active_24,'active_30':active_30,'paid_users':paid_users,
+            'repeat_users':repeat_users,'inactive_30':inactive_30,
+            'revenue_30':revenue_30,'revenue_7':revenue_7,
+            'conversion':conversion,'repeat_rate':repeat_rate,'avg_check':round(avg_check)
+        }
 
 def users(limit=500):
     with conn() as c: return c.execute('SELECT * FROM users ORDER BY last_seen DESC LIMIT ?',(limit,)).fetchall()
