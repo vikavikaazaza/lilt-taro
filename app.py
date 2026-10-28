@@ -13,7 +13,6 @@ from fastapi.staticfiles import StaticFiles
 import uvicorn
 
 import config, db
-import daily_card
 from chad import ask
 from transits import calculate_transits
 from synastry import calculate_synastry
@@ -219,84 +218,6 @@ async def deck_cb(c):
         'Сформулируй свой вопрос и напиши его полностью ❤️\n\n'
         'Например: Что ждет меня в следующем месяце?'
     )
-
-@router.message(Command('daily'))
-async def daily_cmd(m):
-    db.user(m.from_user)
-    on=db.daily_card_enabled(m.from_user.id)
-    if on:
-        kb=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='Отключить рассылку',callback_data='daily:off')]])
-        await answer_user(m,f'Каждое утро я присылаю карту дня с короткой расшифровкой ✨ (около {config.DAILY_CARD_TIME}). Рассылка включена.',reply_markup=kb)
-    else:
-        kb=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='Включить рассылку',callback_data='daily:on')]])
-        await answer_user(m,'Рассылка карты дня сейчас отключена.',reply_markup=kb)
-
-@router.callback_query(F.data.in_({'daily:on','daily:off'}))
-async def daily_toggle(c):
-    on=c.data=='daily:on'
-    db.user(c.from_user)
-    db.set_daily_card(c.from_user.id,on)
-    db.event(c.from_user.id,'daily_on' if on else 'daily_off')
-    await c.answer('Рассылка включена ✨' if on else 'Рассылка отключена')
-    kb=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='Спросить подробнее ✨',callback_data='day')],
-        [InlineKeyboardButton(text=('Отключить рассылку' if on else 'Включить рассылку'),callback_data='daily:off' if on else 'daily:on')]])
-    try: await c.message.edit_reply_markup(reply_markup=kb)
-    except Exception: pass
-    await c.message.answer('Карта дня будет приходить каждое утро ❤️' if on else 'Больше не буду присылать карту дня. Вернуть рассылку можно командой /daily ❤️')
-
-def stats_report_text():
-    """Сводка для владельца: откуда люди, сколько дошло до расклада и оплаты, кто платит."""
-    out=[]
-    with db.conn() as c:
-        q=lambda sql,*a: c.execute(sql,a).fetchall()
-        one=lambda sql,*a: c.execute(sql,a).fetchone()[0]
-        total=one('SELECT COUNT(*) FROM users')
-        out.append(f'Всего пользователей: {total}')
-        out.append('\nИсточники:')
-        for r in q("SELECT COALESCE(source,'telegram') s, COUNT(*) n FROM users GROUP BY 1 ORDER BY 2 DESC"):
-            out.append(f'  {r["s"]}: {r["n"]}')
-        non_sambot=one("SELECT COUNT(*) FROM users WHERE COALESCE(source,'')!='sambot'")
-        out.append(f'\nБез Sambot (живая аудитория): {non_sambot}')
-        r=one('SELECT COUNT(DISTINCT user_id) FROM readings')
-        out.append(f'Получили хотя бы один расклад: {r}')
-        out.append(f'Всего раскладов: {one("SELECT COUNT(*) FROM readings")}')
-        out.append(f'Ноль запросов и не платили: {one("SELECT COUNT(*) FROM users WHERE requests<=0 AND paid_requests<=0 AND total_spent=0")}')
-        out.append(f'Начали оплату (создан платёж): {one("SELECT COUNT(DISTINCT user_id) FROM payments")}')
-        out.append(f'Оплатили: {one("SELECT COUNT(DISTINCT user_id) FROM payments WHERE status=\'succeeded\'")}')
-        out.append('\nКакие пакеты покупают (сумма: штук):')
-        for r in q("SELECT amount, COUNT(*) n FROM payments WHERE status='succeeded' GROUP BY amount ORDER BY n DESC"):
-            out.append(f'  {r["amount"]} ₽: {r["n"]}')
-        out.append('\nПлатящие (платежей, сумма, имя):')
-        for r in q("SELECT p.user_id, COUNT(*) n, SUM(p.amount) s, u.name, u.username FROM payments p LEFT JOIN users u ON u.id=p.user_id WHERE p.status='succeeded' GROUP BY p.user_id ORDER BY n DESC, s DESC LIMIT 25"):
-            nick=('@'+r['username']) if r['username'] else (r['name'] or '')
-            out.append(f'  {r["user_id"]}: {r["n"]} шт, {r["s"]} ₽ {nick}')
-        r=one_row=c.execute("SELECT MIN(first_seen) a, MAX(first_seen) b FROM users WHERE COALESCE(source,'')!='sambot'").fetchone()
-        out.append(f'\nНе-sambot пользователи: первый {str(r["a"])[:10]}, последний {str(r["b"])[:10]}')
-        out.append('Новых по неделям (последние 6, без sambot):')
-        for r in q("SELECT strftime('%Y-%m-%d',first_seen,'weekday 0','-6 days') w, COUNT(*) n FROM users WHERE COALESCE(source,'')!='sambot' GROUP BY w ORDER BY w DESC LIMIT 6"):
-            out.append(f'  неделя с {r["w"]}: {r["n"]}')
-        out.append(f'\nПодписаны на карту дня: {one("SELECT COUNT(*) FROM users WHERE daily_card=1")}')
-    return '\n'.join(out)
-
-@router.message(Command('stats'))
-async def stats_cmd(m):
-    if m.from_user.id not in config.ADMIN_IDS: return
-    try:
-        text=stats_report_text()
-    except Exception as e:
-        await m.answer(f'Ошибка: {type(e).__name__}: {e}'); return
-    for i in range(0,len(text),4000):
-        await m.answer(text[i:i+4000])
-
-@router.message(Command('daily_test'))
-async def daily_test(m):
-    if m.from_user.id not in config.ADMIN_IDS: return
-    await m.answer('Готовлю пробную карту дня…')
-    try:
-        name=await daily_card.send_preview(bot,m.from_user.id)
-        await m.answer(f'Тест выполнен. Выпала карта: {name}. Рассылка за день не затронута.')
-    except Exception as e:
-        await m.answer(f'Ошибка: {type(e).__name__}: {e}')
 
 @router.callback_query(F.data=='day')
 async def day_cb(c):
@@ -1281,15 +1202,11 @@ async def main():
     port=int(__import__('os').getenv('PORT','8000'))
     server=uvicorn.Server(uvicorn.Config(app,host='0.0.0.0',port=port,log_level='info'))
     payment_task=asyncio.create_task(_yookassa_reconcile_loop())
-    daily_task=asyncio.create_task(daily_card.daily_loop(bot))
     try:
         await asyncio.gather(dp.start_polling(bot), server.serve())
     finally:
         payment_task.cancel()
         try: await payment_task
-        except asyncio.CancelledError: pass
-        daily_task.cancel()
-        try: await daily_task
         except asyncio.CancelledError: pass
         for task in list(TRANSIT_TASKS):
             task.cancel()
