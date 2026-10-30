@@ -315,3 +315,36 @@ def calculation_for_ai(calc: dict[str, Any]) -> str:
     if not calc['time_known']:
         lines.append('Время рождения неизвестно: дома и Асцендент не используются; положение натальной Луны приблизительное.')
     return '\n'.join(lines)
+
+
+def daily_sky_signature(day: date) -> dict[str, Any]:
+    """Calculate a lightweight daily sky signature using built-in Moshier ephemeris.
+
+    This is intentionally local/offline: no paid AI or remote astrology API is used.
+    The noon UTC snapshot keeps the result stable and reproducible for the whole day.
+    """
+    _require_swe()
+    dt_utc = datetime.combine(day, time(12, 0), tzinfo=timezone.utc)
+    jd_ut = _julian_day(dt_utc)
+    flags = swe.FLG_MOSEPH | swe.FLG_SPEED
+    positions: dict[str, dict[str, Any]] = {}
+    for name, body in PLANETS[:5]:
+        result = swe.calc_ut(jd_ut, body, flags)
+        xx = result[0]
+        longitude = normalize_deg(float(xx[0]))
+        speed = float(xx[3])
+        sign, _, _ = sign_info(longitude)
+        positions[name] = {'longitude': longitude, 'speed': speed, 'sign': sign, 'retrograde': speed < -0.0001}
+    elongation = normalize_deg(positions['Луна']['longitude'] - positions['Солнце']['longitude'])
+    phase_index = int(((elongation + 22.5) % 360) // 45)
+    phase_names = ('Новолуние', 'Растущая Луна', 'Первая четверть', 'Прибывающая Луна',
+                   'Полнолуние', 'Убывающая Луна', 'Последняя четверть', 'Старая Луна')
+    return {
+        'sun_sign': positions['Солнце']['sign'],
+        'moon_sign': positions['Луна']['sign'],
+        'mercury_retrograde': positions['Меркурий']['retrograde'],
+        'venus_sign': positions['Венера']['sign'],
+        'mars_sign': positions['Марс']['sign'],
+        'moon_phase': phase_names[phase_index],
+        'phase_index': phase_index,
+    }
