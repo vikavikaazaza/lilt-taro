@@ -75,25 +75,12 @@ def init():
           created_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_transit_readings_user_created ON transit_readings(user_id, created_at, id);
-        CREATE TABLE IF NOT EXISTS synastry_profiles(
-          user_id INTEGER PRIMARY KEY,
-          name1 TEXT NOT NULL DEFAULT '', birth_date1 TEXT NOT NULL, birth_time1 TEXT, time_known1 INTEGER NOT NULL DEFAULT 0,
-          city1 TEXT NOT NULL, latitude1 REAL NOT NULL, longitude1 REAL NOT NULL, timezone1 TEXT NOT NULL,
-          name2 TEXT NOT NULL DEFAULT '', birth_date2 TEXT NOT NULL, birth_time2 TEXT, time_known2 INTEGER NOT NULL DEFAULT 0,
-          city2 TEXT NOT NULL, latitude2 REAL NOT NULL, longitude2 REAL NOT NULL, timezone2 TEXT NOT NULL,
-          updated_at TEXT NOT NULL
+        CREATE TABLE IF NOT EXISTS horoscope_subscribers(
+          user_id INTEGER PRIMARY KEY, birth_date TEXT, enabled INTEGER NOT NULL DEFAULT 0,
+          asked_at TEXT, subscribed_at TEXT, last_sent_date TEXT
         );
-        CREATE TABLE IF NOT EXISTS synastry_readings(
-          id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, name1 TEXT, name2 TEXT,
-          input_data TEXT NOT NULL, calculation TEXT NOT NULL, answer TEXT NOT NULL, created_at TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_synastry_readings_user_created ON synastry_readings(user_id, created_at, id);
-        CREATE TABLE IF NOT EXISTS synastry_transit_readings(
-          id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, name1 TEXT, name2 TEXT, transit_date TEXT NOT NULL,
-          input_data TEXT NOT NULL, calculation TEXT NOT NULL, answer TEXT NOT NULL, created_at TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_synastry_transit_readings_user_created ON synastry_transit_readings(user_id, created_at, id);
         ''')
+        c.executescript('DROP TABLE IF EXISTS synastry_transit_readings; DROP TABLE IF EXISTS synastry_readings; DROP TABLE IF EXISTS synastry_profiles;')
         # Upgrade older databases safely.
         cols={r['name'] for r in c.execute('PRAGMA table_info(users)').fetchall()}
         for name, definition in [('source',"TEXT DEFAULT 'telegram'"),('referrer_id','INTEGER'),('free_granted','INTEGER NOT NULL DEFAULT 1'),('total_spent','INTEGER NOT NULL DEFAULT 0')]:
@@ -136,6 +123,27 @@ def set_manual_subscription(uid, enabled=True):
 
 def touch(uid):
     with conn() as c: c.execute('UPDATE users SET last_seen=? WHERE id=?',(now(),uid))
+
+def set_horoscope_pending(uid):
+    with conn() as c:
+        c.execute('INSERT INTO horoscope_subscribers(user_id,enabled,asked_at) VALUES(?,0,?) ON CONFLICT(user_id) DO UPDATE SET asked_at=excluded.asked_at',(int(uid),now()))
+
+def save_horoscope_birthday(uid, birth_date):
+    with conn() as c:
+        c.execute('INSERT INTO horoscope_subscribers(user_id,birth_date,enabled,subscribed_at) VALUES(?,?,1,?) ON CONFLICT(user_id) DO UPDATE SET birth_date=excluded.birth_date,enabled=1,subscribed_at=excluded.subscribed_at',(int(uid),str(birth_date),now()))
+
+def horoscope_subscriber(uid):
+    with conn() as c: return c.execute('SELECT * FROM horoscope_subscribers WHERE user_id=?',(int(uid),)).fetchone()
+
+def horoscope_toggle(uid, enabled):
+    with conn() as c:
+        c.execute('INSERT INTO horoscope_subscribers(user_id,enabled) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET enabled=excluded.enabled',(int(uid),int(bool(enabled))))
+
+def horoscope_recipients():
+    with conn() as c: return c.execute('SELECT h.user_id,h.birth_date FROM horoscope_subscribers h JOIN users u ON u.id=h.user_id WHERE h.enabled=1 AND h.birth_date IS NOT NULL ORDER BY h.user_id').fetchall()
+
+def horoscope_mark_sent(uid, day):
+    with conn() as c: c.execute('UPDATE horoscope_subscribers SET last_sent_date=? WHERE user_id=?',(str(day),int(uid)))
 
 def event(uid,event,meta=''):
     with conn() as c: c.execute('INSERT INTO events(user_id,event,meta,created_at) VALUES(?,?,?,?)',(uid,event,meta,now()))
@@ -182,35 +190,6 @@ def save_transit_reading(uid, transit_date, city, input_data, calculation, answe
 def user_transit_readings(uid, limit=100):
     with conn() as c:
         return c.execute('SELECT * FROM transit_readings WHERE user_id=? ORDER BY created_at ASC, id ASC LIMIT ?',(int(uid),int(limit))).fetchall()
-def save_synastry_profile(uid, name1, p1, name2, p2):
-    with conn() as c:
-        c.execute(
-            'INSERT INTO synastry_profiles(user_id,name1,birth_date1,birth_time1,time_known1,city1,latitude1,longitude1,timezone1,name2,birth_date2,birth_time2,time_known2,city2,latitude2,longitude2,timezone2,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) '
-            'ON CONFLICT(user_id) DO UPDATE SET name1=excluded.name1,birth_date1=excluded.birth_date1,birth_time1=excluded.birth_time1,time_known1=excluded.time_known1,city1=excluded.city1,latitude1=excluded.latitude1,longitude1=excluded.longitude1,timezone1=excluded.timezone1,name2=excluded.name2,birth_date2=excluded.birth_date2,birth_time2=excluded.birth_time2,time_known2=excluded.time_known2,city2=excluded.city2,latitude2=excluded.latitude2,longitude2=excluded.longitude2,timezone2=excluded.timezone2,updated_at=excluded.updated_at',
-            (int(uid),str(name1 or ''),p1['birth_date'].isoformat(),p1.get('birth_time').strftime('%H:%M') if p1.get('birth_time') else None,int(bool(p1.get('time_known'))),str(p1['city']),float(p1['lat']),float(p1['lon']),str(p1['timezone']),str(name2 or ''),p2['birth_date'].isoformat(),p2.get('birth_time').strftime('%H:%M') if p2.get('birth_time') else None,int(bool(p2.get('time_known'))),str(p2['city']),float(p2['lat']),float(p2['lon']),str(p2['timezone']),now())
-        )
-        return c.execute('SELECT * FROM synastry_profiles WHERE user_id=?',(int(uid),)).fetchone()
-
-def synastry_profile(uid):
-    with conn() as c:
-        return c.execute('SELECT * FROM synastry_profiles WHERE user_id=?',(int(uid),)).fetchone()
-
-def save_synastry_reading(uid,name1,name2,input_data,calculation,answer):
-    with conn() as c:
-        c.execute('INSERT INTO synastry_readings(user_id,name1,name2,input_data,calculation,answer,created_at) VALUES(?,?,?,?,?,?,?)',(int(uid),str(name1 or ''),str(name2 or ''),str(input_data),str(calculation),str(answer),now()))
-
-def user_synastry_readings(uid,limit=100):
-    with conn() as c:
-        return c.execute('SELECT * FROM synastry_readings WHERE user_id=? ORDER BY created_at ASC,id ASC LIMIT ?',(int(uid),int(limit))).fetchall()
-
-def save_synastry_transit_reading(uid,name1,name2,transit_date,input_data,calculation,answer):
-    with conn() as c:
-        c.execute('INSERT INTO synastry_transit_readings(user_id,name1,name2,transit_date,input_data,calculation,answer,created_at) VALUES(?,?,?,?,?,?,?,?)',(int(uid),str(name1 or ''),str(name2 or ''),str(transit_date),str(input_data),str(calculation),str(answer),now()))
-
-def user_synastry_transit_readings(uid,limit=100):
-    with conn() as c:
-        return c.execute('SELECT * FROM synastry_transit_readings WHERE user_id=? ORDER BY created_at ASC,id ASC LIMIT ?',(int(uid),int(limit))).fetchall()
-
 def set_pending(uid,deck,mode,question):
     with conn() as c: c.execute('INSERT INTO pending(user_id,deck,mode,question,created_at) VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET deck=excluded.deck,mode=excluded.mode,question=excluded.question,created_at=excluded.created_at',(uid,deck,mode,question,now()))
 
@@ -291,7 +270,9 @@ def pending_payments(limit=50, user_id=None):
         return c.execute("SELECT * FROM payments WHERE user_id=? AND credited=0 AND status!='canceled' ORDER BY id DESC LIMIT ?",(int(user_id),limit)).fetchall()
 
 def reading(uid,deck,mode,question,cards,answer):
-    with conn() as c: c.execute('INSERT INTO readings(user_id,deck,mode,question,cards,answer,created_at) VALUES(?,?,?,?,?,?,?)',(uid,deck,mode,question,cards,answer,now()))
+    with conn() as c:
+        c.execute('INSERT INTO readings(user_id,deck,mode,question,cards,answer,created_at) VALUES(?,?,?,?,?,?,?)',(uid,deck,mode,question,cards,answer,now()))
+        c.execute('INSERT INTO events(user_id,event,meta,created_at) VALUES(?,?,?,?)',(uid,'reading_completed',str(deck),now()))
 
 def create_ref(uid):
     with conn() as c:
@@ -325,11 +306,17 @@ def stats():
           'payments':c.execute("SELECT COUNT(*) n FROM payments WHERE status='succeeded'").fetchone()['n'],
           'revenue':c.execute("SELECT COALESCE(SUM(amount),0) n FROM payments WHERE status='succeeded'").fetchone()['n']}
 
-def users(limit=500):
-    with conn() as c: return c.execute('SELECT * FROM users ORDER BY last_seen DESC LIMIT ?',(limit,)).fetchall()
+def users(limit=None, search=''):
+    # Python casefold gives proper case-insensitive matching for Cyrillic names too.
+    with conn() as c:
+        rows=c.execute('SELECT * FROM users ORDER BY last_seen DESC, id DESC').fetchall()
+    term=(search or '').strip().lstrip('@').casefold()
+    if term:
+        rows=[r for r in rows if term in str(r['id']) or term in str(r['name'] or '').casefold() or term in str(r['username'] or '').casefold()]
+    return rows[:int(limit)] if limit is not None else rows
 
 def top_payers(limit=20):
     with conn() as c: return c.execute("SELECT id,name,username,total_spent FROM users WHERE total_spent>0 ORDER BY total_spent DESC LIMIT ?",(limit,)).fetchall()
 
 def source_stats():
-    with conn() as c: return c.execute('SELECT COALESCE(source,\'telegram\') source, COUNT(*) n FROM users GROUP BY source ORDER BY n DESC').fetchall()
+    with conn() as c: return c.execute("SELECT COALESCE(u.source,'telegram') source, COUNT(DISTINCT u.id) n, COUNT(DISTINCT CASE WHEN p.status='succeeded' THEN u.id END) buyers, COALESCE(SUM(CASE WHEN p.status='succeeded' THEN p.amount ELSE 0 END),0) revenue FROM users u LEFT JOIN payments p ON p.user_id=u.id GROUP BY COALESCE(u.source,'telegram') ORDER BY n DESC").fetchall()
