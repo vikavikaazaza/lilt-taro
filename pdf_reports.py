@@ -331,19 +331,6 @@ def _build_pdf(path: str | Path, title: str, subtitle: str, meta_lines: Iterable
     return str(out)
 
 
-def build_synastry_pdf(path: str | Path, answer: str, calc: dict) -> str:
-    name1 = str(calc.get("name1") or "Человек 1")
-    name2 = str(calc.get("name2") or "Человек 2")
-    p1 = calc.get("person1", {})
-    p2 = calc.get("person2", {})
-    meta = [
-        f"{name1} + {name2}",
-        f"{name1}: {p1.get('birth_date', '')} · {p1.get('birth_time') or 'время неизвестно'} · {p1.get('city', '')}",
-        f"{name2}: {p2.get('birth_date', '')} · {p2.get('birth_time') or 'время неизвестно'} · {p2.get('city', '')}",
-    ]
-    return _build_pdf(path, "Синастрия", "ЛИЛИТ · персональный разбор отношений", meta, answer)
-
-
 def build_transit_pdf(path: str | Path, answer: str, calc: dict) -> str:
     date = str(calc.get("transit_date") or "")
     city = str(calc.get("city") or "")
