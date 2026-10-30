@@ -1,6 +1,6 @@
 import asyncio, hashlib, hmac, html, json, secrets, urllib.parse, re, aiohttp
 from pathlib import Path
-from datetime import date as dt_date, datetime as dt_datetime, time as dt_time
+from datetime import date as dt_date, datetime as dt_datetime, time as dt_time, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Optional
 
@@ -14,11 +14,9 @@ import uvicorn
 
 import config, db
 from chad import ask
-from transits import calculate_transits
-from synastry import calculate_synastry
-from pdf_reports import build_transit_pdf, build_synastry_pdf
-from astro_reports import (build_transit_interpretation, build_synastry_interpretation,
-                           build_synastry_aspect_detail, build_synastry_compatibility_summary, build_synastry_rule_report)
+from transits import calculate_transits, daily_sky_signature
+from pdf_reports import build_transit_pdf
+from astro_reports import build_transit_interpretation
 
 BASE=Path(__file__).resolve().parent
 router=Router()
@@ -26,25 +24,31 @@ bot: Bot
 BROADCAST_TASKS=set()
 READING_TASKS=set()
 TRANSIT_TASKS=set()
-RELATION_TASKS=set()
 TRANSIT_MINIAPP_VERSION='1'
-RELATION_MINIAPP_VERSION='1'
 NOMINATIM_LOCK=asyncio.Lock()
 NOMINATIM_LAST=0.0
 
 class DialogueMiddleware(BaseMiddleware):
     async def __call__(self, handler, event, data):
+        if isinstance(event, types.CallbackQuery) and event.from_user:
+            try:
+                db.touch(event.from_user.id)
+                db.log_message(event.from_user.id,'user','[button] '+str(event.data or ''),'callback')
+            except Exception as e:
+                print(f'[DIALOGUE] callback log error: {type(e).__name__}: {e}',flush=True)
         if isinstance(event, types.Message) and event.from_user:
             text=event.text or event.caption
             if not text:
                 text=f'[{getattr(event, "content_type", "message")}]'
             try:
+                db.touch(event.from_user.id)
                 db.log_message(event.from_user.id,'user',text,getattr(event,'content_type','text'))
             except Exception as e:
                 print(f'[DIALOGUE] incoming log error: {type(e).__name__}: {e}',flush=True)
         return await handler(event,data)
 
 router.message.middleware(DialogueMiddleware())
+router.callback_query.middleware(DialogueMiddleware())
 
 async def answer_user(m,text,**kwargs):
     db.log_message(int(m.chat.id),'bot',text,'text')
@@ -90,7 +94,7 @@ DECK_NAMES={'waite':'Таро Уэйта','manara':'Таро Манара','day'
 def menu():
     return InlineKeyboardMarkup(inline_keyboard=[
       [InlineKeyboardButton(text='Таро Уэйта',callback_data='deck:waite'),InlineKeyboardButton(text='Таро Манара',callback_data='deck:manara')],
-      [InlineKeyboardButton(text='Карта дня',callback_data='day'),InlineKeyboardButton(text='Синастрия',callback_data='synastry')],
+      [InlineKeyboardButton(text='Карта дня',callback_data='day'),InlineKeyboardButton(text='Транзиты 🌌',callback_data='transits')],
       [InlineKeyboardButton(text='Реферальная программа ',callback_data='friend')],
       [InlineKeyboardButton(text='Оформить подписку ',callback_data='pay')]])
 
@@ -126,19 +130,6 @@ async def transit_start(m, uid=None):
     uid=int(uid or m.from_user.id)
     await answer_user(m, 'Посмотрим, какие темы и влияния могут быть активны для тебя в выбранную дату 🌌\n\nВведи данные рождения и дату, на которую хочешь сделать расчёт.', reply_markup=transit_mini_button())
 
-
-def relation_mini_button():
-    if not bot_url().startswith('https://'):
-        raise RuntimeError('PUBLIC_BASE_URL должен начинаться с https://')
-    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
-        text='Открыть синастрию 💞',
-        web_app=WebAppInfo(url=f'{bot_url()}/synastry?v={RELATION_MINIAPP_VERSION}')
-    )]])
-
-async def synastry_start(m, uid=None):
-    uid=int(uid or m.from_user.id)
-    # Синастрия бесплатная и доступна независимо от баланса запросов.
-    await answer_user(m,'Сравним две натальные карты и посмотрим, как люди взаимодействуют друг с другом 💞\n\nВведи данные рождения обоих людей.',reply_markup=relation_mini_button())
 
 async def main_menu(m):
     u=db.get(m.from_user.id); left=(int(u['requests']) if u else 0)+(int(u['paid_requests']) if u else 0)
@@ -185,6 +176,99 @@ async def start(m:types.Message):
     db.event(m.from_user.id,'start',source if not existing else 'return')
     await main_menu(m)
 
+HOROSCOPE_TZ = __import__('os').getenv('HOROSCOPE_TIMEZONE', 'Europe/Moscow')
+HOROSCOPE_HOUR = int(__import__('os').getenv('HOROSCOPE_HOUR', '9'))
+ZODIAC = [
+    ('Козерог', (1,1), (1,19)), ('Водолей',(1,20),(2,18)), ('Рыбы',(2,19),(3,20)),
+    ('Овен',(3,21),(4,19)), ('Телец',(4,20),(5,20)), ('Близнецы',(5,21),(6,20)),
+    ('Рак',(6,21),(7,22)), ('Лев',(7,23),(8,22)), ('Дева',(8,23),(9,22)),
+    ('Весы',(9,23),(10,22)), ('Скорпион',(10,23),(11,21)), ('Стрелец',(11,22),(12,21)),
+    ('Козерог',(12,22),(12,31))]
+HOROSCOPE_LINES = [
+    ('Сегодня полезно замедлиться и выбрать главное. В работе поможет последовательность, а в отношениях — спокойный разговор без ожидания, что другой человек догадается о ваших чувствах. Финансовые решения лучше принимать без спешки.',
+     'День подходит для новых идей и небольших шагов к большой цели. Не распыляйтесь: одна завершённая задача принесёт больше удовлетворения, чем несколько начатых. В личном общении проявите инициативу.',
+     'Обратите внимание на баланс между желаниями и обязанностями. Возможен разговор, который прояснит ситуацию. Не соглашайтесь из вежливости на то, что вам неудобно. Вечером найдите время для восстановления сил.',
+     'Сегодня многое зависит от вашего настроя. Практичный подход поможет решить денежный или рабочий вопрос. В отношениях цените конкретные поступки и не делайте выводов по одному сообщению.'),
+    ('Энергия дня располагает к общению и обмену идеями. Полезный совет может прийти от неожиданного человека. Не обещайте больше, чем готовы выполнить, и оставьте немного времени для себя.',
+     'Сосредоточьтесь на том, что действительно можете контролировать. Хороший день для порядка в делах, планирования бюджета и завершения старых задач. В чувствах выбирайте ясность вместо намёков.',
+     'Не торопите события: некоторым решениям нужно созреть. Если возникнет напряжение, сделайте паузу и вернитесь к разговору позже. Маленькая забота о себе сегодня окажется особенно своевременной.',
+     'День может принести шанс укрепить полезную связь или договорённость. Будьте открыты, но проверяйте детали. В финансовых вопросах избегайте импульсивных покупок ради быстрого настроения.'),
+    ('Сегодня стоит доверять наблюдательности, но проверять первые впечатления фактами. Хорошее время для обучения и планирования. В отношениях мягкость поможет обсудить даже непростую тему.',
+     'Смелая идея заслуживает внимания, если у неё есть понятный следующий шаг. Не ждите идеального момента — начните с малого. В личной жизни проявите интерес к тому, что важно близкому человеку.',
+     'День напоминает о ценности устойчивости. Разберите один накопившийся вопрос и не берите на себя чужую ответственность. Возможность сэкономить или разумно распределить ресурсы окажется полезной.',
+     'Сегодня лучше действовать спокойно и без сравнения себя с другими. Ваш темп имеет значение. В отношениях честный вопрос даст больше, чем догадки; в работе поможет чёткий список приоритетов.')]
+
+def zodiac_for(birth):
+    d=dt_date.fromisoformat(str(birth)); md=(d.month,d.day)
+    if md >= (12,22) or md <= (1,19): return 'Козерог'
+    ranges=[('Водолей',(1,20),(2,18)),('Рыбы',(2,19),(3,20)),('Овен',(3,21),(4,19)),('Телец',(4,20),(5,20)),('Близнецы',(5,21),(6,20)),('Рак',(6,21),(7,22)),('Лев',(7,23),(8,22)),('Дева',(8,23),(9,22)),('Весы',(9,23),(10,22)),('Скорпион',(10,23),(11,21)),('Стрелец',(11,22),(12,21))]
+    for sign,start,end in ranges:
+        if start <= md <= end: return sign
+    return 'Козерог'
+
+def horoscope_text(birth, day, sky=None):
+    sign=zodiac_for(birth)
+    signs=['Овен','Телец','Близнецы','Рак','Лев','Дева','Весы','Скорпион','Стрелец','Козерог','Водолей','Рыбы']
+    idx=signs.index(sign)
+    import hashlib
+    seed=int(hashlib.sha256(f'{day}:{sign}'.encode()).hexdigest()[:8],16)
+    sky=sky or daily_sky_signature(day)
+    # Moon phase selects the main editorial theme; the natal Sun sign rotates
+    # the advice, while Mercury's actual speed changes the communication note.
+    group=int(sky.get('phase_index',0)) % len(HOROSCOPE_LINES)
+    line=HOROSCOPE_LINES[group][(seed+idx+int(bool(sky.get('mercury_retrograde'))))%4]
+    moon_element={'Овен':'огненной','Лев':'огненной','Стрелец':'огненной','Телец':'земной','Дева':'земной','Козерог':'земной','Близнецы':'воздушной','Весы':'воздушной','Водолей':'воздушной','Рак':'водной','Скорпион':'водной','Рыбы':'водной'}.get(sky.get('moon_sign'),'')
+    phase_note={0:'Начало лунного цикла поддерживает намерения и планирование.',1:'Растущая Луна помогает постепенно развивать начатое.',2:'Первая четверть подталкивает перейти от планов к действиям.',3:'Прибывающая Луна помогает укреплять выбранное направление.',4:'Полнолуние усиливает эмоции: не торопитесь с выводами.',5:'Убывающая Луна подходит для завершения и освобождения от лишнего.',6:'Последняя четверть помогает пересмотреть привычки и приоритеты.',7:'Период перед новым циклом подходит для отдыха и подведения итогов.'}.get(int(sky.get('phase_index',0))%8,'')
+    moon_note=f' Луна в {moon_element} стихии ({sky.get("moon_sign","")}) задаёт тон чувствам и реакциям.' if moon_element else ''
+    mercury_note=' Меркурий ретрограден: перепроверяйте договорённости, даты и сообщения.' if sky.get('mercury_retrograde') else ''
+    emoji={'Овен':'♈️','Телец':'♉️','Близнецы':'♊️','Рак':'♋️','Лев':'♌️','Дева':'♍️','Весы':'♎️','Скорпион':'♏️','Стрелец':'♐️','Козерог':'♑️','Водолей':'♒️','Рыбы':'♓️'}.get(sign,'✨')
+    result=f'{emoji} {sign} · {day.strftime("%d.%m.%Y")}\n{line} {phase_note}{moon_note}{mercury_note}'
+    return result[:500]
+
+@router.message(Command('onhoroscope'))
+async def on_horoscope(m):
+    if not db.get(m.from_user.id): db.user(m.from_user)
+    sub=db.horoscope_subscriber(m.from_user.id)
+    if sub and sub['birth_date']:
+        db.horoscope_toggle(m.from_user.id,True)
+        db.event(m.from_user.id,'horoscope_enabled','existing_birthday')
+        await answer_user(m,'🌙 Ежедневный гороскоп включён! Буду присылать его каждый день. Отключить можно командой /offhoroscope.')
+        return
+    db.set_horoscope_pending(m.from_user.id)
+    db.set_pending(m.from_user.id,'horoscope_birth','', '')
+    await answer_user(m,'🌙 Чтобы подобрать ваш знак зодиака, напишите дату рождения в формате ДД.ММ.ГГГГ. После этого ежедневный гороскоп будет включён. Команда /offhoroscope отключает рассылку.')
+
+@router.message(Command('offhoroscope'))
+async def off_horoscope(m):
+    if not db.get(m.from_user.id): db.user(m.from_user)
+    db.horoscope_toggle(m.from_user.id,False)
+    pending=db.get_pending(m.from_user.id)
+    if pending and pending['deck']=='horoscope_birth': db.clear_pending(m.from_user.id)
+    db.event(m.from_user.id,'horoscope_disabled','user_command')
+    await answer_user(m,'Рассылка гороскопов отключена. Если захотите вернуться, используйте /onhoroscope ❤️')
+
+async def horoscope_dispatch_loop():
+    while True:
+        try:
+            tz=ZoneInfo(HOROSCOPE_TZ)
+            local=dt_datetime.now(tz)
+            if local.hour >= HOROSCOPE_HOUR:
+                today=local.date()
+                sky=daily_sky_signature(today)
+                for row in db.horoscope_recipients():
+                    sub=db.horoscope_subscriber(row['user_id'])
+                    if not sub or sub['last_sent_date']==today.isoformat(): continue
+                    try:
+                        await send_user_message(int(row['user_id']),horoscope_text(row['birth_date'],today,sky))
+                        db.horoscope_mark_sent(row['user_id'],today.isoformat())
+                        db.event(row['user_id'],'horoscope_sent',today.isoformat())
+                    except Exception as exc:
+                        print(f'[HOROSCOPE] send failed uid={row["user_id"]}: {type(exc).__name__}: {exc}',flush=True)
+                    await asyncio.sleep(0.06)
+        except Exception as exc:
+            print(f'[HOROSCOPE] scheduler error: {type(exc).__name__}: {exc}',flush=True)
+        await asyncio.sleep(60)
+
 @router.message(Command('friend'))
 async def friend(m): await friend_show(m)
 async def friend_show(m):
@@ -200,9 +284,6 @@ async def manara(m): await deck_start(m,'manara')
 async def day_cmd(m): await day_start(m)
 @router.message(Command('transits'))
 async def transits_cmd(m): await transit_start(m)
-
-@router.message(Command('synastry'))
-async def synastry_cmd(m): await synastry_start(m)
 
 @router.callback_query(F.data.startswith('deck:'))
 async def deck_cb(c):
@@ -239,12 +320,6 @@ async def transits_cb(c):
     await c.answer()
     await transit_start(c.message, c.from_user.id)
 
-@router.callback_query(F.data=='synastry')
-async def synastry_cb(c):
-    await c.answer()
-    await synastry_start(c.message, c.from_user.id)
-
-
 @router.callback_query(F.data=='friend')
 async def friend_cb(c): await c.answer(); await friend_show(c.message)
 @router.callback_query(F.data=='pay')
@@ -267,6 +342,19 @@ async def pack(c):
 async def text_message(m):
     p=db.get_pending(m.from_user.id)
     if not p: return
+    if p['deck']=='horoscope_birth':
+        raw=(m.text or '').strip()
+        parsed=None
+        for fmt in ('%d.%m.%Y','%Y-%m-%d','%d/%m/%Y'):
+            try: parsed=dt_datetime.strptime(raw,fmt).date(); break
+            except ValueError: pass
+        if not parsed or parsed > dt_date.today() or parsed.year < 1900:
+            await answer_user(m,'Не удалось распознать дату. Введите её в формате ДД.ММ.ГГГГ, например 14.05.1995.'); return
+        db.save_horoscope_birthday(m.from_user.id,parsed.isoformat())
+        db.clear_pending(m.from_user.id)
+        db.event(m.from_user.id,'horoscope_enabled',zodiac_for(parsed.isoformat()))
+        await answer_user(m,f'✨ Готово! Ваш знак — {zodiac_for(parsed.isoformat())}. Ежедневный гороскоп включён. Первое сообщение придёт в {HOROSCOPE_HOUR:02d}:00 ({HOROSCOPE_TZ}).')
+        return
     if p['deck']=='payment':
         import re
         email=m.text.strip()
@@ -661,76 +749,6 @@ def _relation_input_json(p1,p2,transit_date=None):
     if transit_date is not None: result['transit_date']=transit_date.isoformat()
     return result
 
-@app.get('/synastry', response_class=HTMLResponse)
-async def synastry_miniapp():
-    return FileResponse(BASE/'web'/'synastry.html',headers={'Cache-Control':'no-store, no-cache, must-revalidate, max-age=0'})
-
-
-@app.get('/api/synastry/profile')
-async def synastry_profile_api(request:Request):
-    tg=validate_init_data(request.query_params.get('initData',''))
-    if not tg: raise HTTPException(403,'Недействительный Telegram initData')
-    row=db.synastry_profile(int(tg['id']))
-    if not row: return {'profile':None}
-    def p(name,bdate,btime,tknown,city,lat,lon,tz): return {'name':name or '','birth_date':bdate,'birth_time':btime or '','time_known':bool(tknown),'city':city,'lat':float(lat),'lon':float(lon),'timezone':tz}
-    return {'profile':{'person1':p(row['name1'],row['birth_date1'],row['birth_time1'],row['time_known1'],row['city1'],row['latitude1'],row['longitude1'],row['timezone1']), 'person2':p(row['name2'],row['birth_date2'],row['birth_time2'],row['time_known2'],row['city2'],row['latitude2'],row['longitude2'],row['timezone2'])}}
-
-@app.post('/api/synastry/preview')
-async def synastry_preview_api(request:Request):
-    body=await request.json(); tg=validate_init_data(body.get('initData',''))
-    if not tg: raise HTTPException(403,'Недействительный Telegram initData')
-    uid=int(tg['id'])
-    if not db.get(uid): raise HTTPException(404,'Пользователь не найден')
-    p1,p2=_relation_payload_from_body(body)
-    calc=calculate_synastry(p1,p2,p1['name'],p2['name'])
-    report=build_synastry_rule_report(calc)
-    return {'ok':True,'report':report,
-            'aspect_count':len(calc.get('aspects',[])),
-            'selected_count':report.get('selected_count',0),
-            'summary':build_synastry_compatibility_summary(calc),
-            'featured_aspects':report.get('featured_aspects',[]),
-            'aspects':report.get('selected_aspects',[]),
-            'angle_aspects':[{**a,
-                'from_person_name': p1['name'] if int(a.get('from_person',1) or 1)==1 else p2['name'],
-                'to_person_name': p2['name'] if int(a.get('to_person',2) or 2)==2 else p1['name']}
-                for a in calc.get('angle_aspects',[])],
-            'person1_has_houses':p1['time_known'],'person2_has_houses':p2['time_known']}
-
-@app.post('/api/synastry/calculate')
-async def synastry_calculate_api(request:Request):
-    body=await request.json(); tg=validate_init_data(body.get('initData',''))
-    if not tg: raise HTTPException(403,'Недействительный Telegram initData')
-    uid=int(tg['id'])
-    if not db.get(uid): raise HTTPException(404,'Пользователь не найден')
-    p1,p2=_relation_payload_from_body(body)
-    calc=calculate_synastry(p1,p2,p1['name'],p2['name'])
-    db.save_synastry_profile(uid,p1['name'],p1,p2['name'],p2)
-    payload=_relation_input_json(p1,p2)
-    report=build_synastry_rule_report(calc)
-    # Сохраняем именно локальный детерминированный разбор. Никаких фоновых задач,
-    # сообщений бота или PDF для синастрии.
-    answer=build_synastry_interpretation(calc)
-    try:
-        db.event(uid,'synastry_calculated',f'{calc["name1"]}|{calc["name2"]}')
-        db.event(uid,'synastry_local_interpretation','rule_based')
-        db.save_synastry_reading(uid,calc['name1'],calc['name2'],json.dumps(payload,ensure_ascii=False),json.dumps(report,ensure_ascii=False),answer)
-    except Exception as exc:
-        print(f'[SYNASTRY] SAVE ERROR uid={uid}: {type(exc).__name__}: {exc}',flush=True)
-    return {'ok':True,'report':report,
-            'aspect_count':len(calc.get('aspects',[])),
-            'selected_count':report.get('selected_count',0),
-            'summary':build_synastry_compatibility_summary(calc),
-            'featured_aspects':report.get('featured_aspects',[]),
-            'aspects':report.get('selected_aspects',[]),
-            'angle_aspects':[{**a,
-                'from_person_name': p1['name'] if int(a.get('from_person',1) or 1)==1 else p2['name'],
-                'to_person_name': p2['name'] if int(a.get('to_person',2) or 2)==2 else p1['name']}
-                for a in calc.get('angle_aspects',[])],
-            'overlays_1_in_2':calc.get('overlays_1_in_2',[]),
-            'overlays_2_in_1':calc.get('overlays_2_in_1',[]),
-            'person1_has_houses':p1['time_known'],'person2_has_houses':p2['time_known'],
-            'names':{'person1':p1['name'],'person2':p2['name']}}
-
 @app.get('/api/miniapp/config')
 async def mini_config(deck:str='waite'):
     if deck not in ('waite','manara','day'):
@@ -773,7 +791,11 @@ def validate_init_data(init_data):
         secret=hmac.new(b'WebAppData',config.BOT_TOKEN.encode(),hashlib.sha256).digest()
         calc=hmac.new(secret,check.encode(),hashlib.sha256).hexdigest()
         if not hmac.compare_digest(calc,received): return None
-        user_data=json.loads(data.get('user','{}')); return user_data
+        user_data=json.loads(data.get('user','{}'))
+        if user_data.get('id'):
+            try: db.touch(int(user_data['id']))
+            except Exception: pass
+        return user_data
     except Exception: return None
 
 def _track_reading_task(task):
@@ -943,59 +965,42 @@ def auth_ok(request:Request):
     try: raw=base64.b64decode(a[6:]).decode(); u,p=raw.split(':',1); return secrets.compare_digest(u,config.ADMIN_USERNAME) and secrets.compare_digest(p,config.ADMIN_PASSWORD)
     except: return False
 
-def admin_page():
-    s=db.stats(); us=db.users(); tops=db.top_payers(); src=db.source_stats(); reads=db.recent_readings(); pays=db.recent_payments()
-    rows=''.join(f'<tr><td><a href="/admin/user/{u["id"]}" style="color:#f5e9c8;font-weight:bold;text-decoration:none">{u["id"]}</a></td><td><a href="/admin/user/{u["id"]}" style="color:#d7bb73;text-decoration:none">{html.escape(u["name"] or "")}</a></td><td>@{html.escape(u["username"] or "—")}</td><td>{int(u["requests"])+int(u["paid_requests"])}</td><td>{int(u["requests"])}</td><td>{int(u["paid_requests"])}</td><td>{"ВКЛ" if has_manual_subscription(u["id"]) else "—"}</td><td>{html.escape(u["source"] or "telegram")}</td><td>{html.escape(u["last_seen"] or "")}</td><td><a href="/admin/user/{u["id"]}" style="color:#d7bb73">Открыть</a></td></tr>' for u in us)
-    top=''.join(f'<tr><td>{html.escape(x["name"] or "")}</td><td>@{html.escape(x["username"] or "—")}</td><td>{x["total_spent"]} ₽</td></tr>' for x in tops)
-    sources=''.join(f'<span class="pill">{html.escape(x["source"])}: {x["n"]}</span>' for x in src)
-    rrows=''.join(f'<tr><td>{r["created_at"][:19].replace("T"," ")}</td><td>{html.escape(r["name"] or str(r["user_id"]))}</td><td>{html.escape(DECK_NAMES.get(r["deck"],r["deck"]))}</td><td>{html.escape(r["question"][:120])}</td></tr>' for r in reads)
-    prows=''.join(f'<tr><td>{p["created_at"][:19].replace("T"," ")}</td><td>{html.escape(p["name"] or str(p["user_id"]))}</td><td>{p["amount"]} ₽</td><td>{p["requests"]}</td><td>{html.escape(p["status"] or "")}</td></tr>' for p in pays)
-    return f'''<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="theme-color" content="#090816"><title>Lilit Admin</title><style>
-*{{box-sizing:border-box}}body{{margin:0;background:#090816;color:#f5e9c8;font:14px Arial,sans-serif;-webkit-text-size-adjust:100%}}.wrap{{max-width:1250px;margin:auto;padding:28px}}h1{{font-size:30px;font-weight:500;letter-spacing:1px;margin:0 0 8px}}h2{{font-weight:500;margin:0}}.grid{{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}}.card,section{{background:#15132a;border:1px solid #302a52;border-radius:16px;padding:18px;box-shadow:0 10px 30px #0003}}.card{{min-width:0}}.num{{font-size:28px;margin-top:8px}}table{{width:100%;border-collapse:collapse;min-width:760px}}.scroll{{overflow:auto;-webkit-overflow-scrolling:touch}}td,th{{padding:10px;border-bottom:1px solid #292440;text-align:left;white-space:nowrap;vertical-align:top}}input,select,textarea,button{{font:inherit;padding:11px 12px;border-radius:10px;border:1px solid #4b416e;background:#0d0c1c;color:#fff}}select{{min-height:44px}}textarea{{width:100%;min-height:110px;resize:vertical}}button{{cursor:pointer;background:#d7bb73;color:#171225;font-weight:bold;min-height:44px}}.pill{{display:inline-block;padding:8px 12px;border:1px solid #4b416e;border-radius:999px;margin:4px}}form.row{{display:flex;gap:10px;flex-wrap:wrap;align-items:center}}form.row input,form.row select{{max-width:100%}}.muted{{color:#aaa2bc;line-height:1.5}}.section-title{{display:flex;align-items:center;justify-content:space-between;gap:12px}}.mobile-note{{display:none}}
-@media(max-width:900px){{.wrap{{padding:18px 14px 28px}}h1{{font-size:25px}}.grid{{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}}.grid .card{{padding:14px}}.grid .num{{font-size:24px}}section{{padding:15px;border-radius:14px}}form.row{{flex-direction:column;align-items:stretch}}form.row input,form.row select,form.row button{{width:100%;max-width:none}}textarea{{min-height:130px}}.mobile-note{{display:block;font-size:12px;margin-top:6px}}}}
-@media(max-width:640px){{.wrap{{padding:12px 10px 24px}}h1{{font-size:22px;line-height:1.2}}h2{{font-size:18px}}.grid{{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}}.grid .card{{padding:12px;min-height:76px}}.grid .num{{font-size:21px}}.card,section{{border-radius:12px}}.section-title{{align-items:flex-start;flex-direction:column}}.pill{{padding:7px 10px;margin:3px}}.users-table{{display:block;min-width:0}}.users-table thead{{display:none}}.users-table tbody,.users-table tr,.users-table td{{display:block;width:100%}}.users-table tr{{background:#0f0d20;border:1px solid #302a52;border-radius:12px;margin:0 0 10px;padding:8px}}.users-table td{{border:0;padding:7px 8px;white-space:normal;display:flex;justify-content:space-between;gap:12px;align-items:flex-start}}.users-table td::before{{color:#aaa2bc;font-size:12px;flex:0 0 42%;content:""}}.users-table td:nth-child(1)::before{{content:"ID"}}.users-table td:nth-child(2)::before{{content:"Имя"}}.users-table td:nth-child(3)::before{{content:"Ник"}}.users-table td:nth-child(4)::before{{content:"Всего"}}.users-table td:nth-child(5)::before{{content:"Бесплатные"}}.users-table td:nth-child(6)::before{{content:"Оплаченные"}}.users-table td:nth-child(7)::before{{content:"Ручная подписка"}}.users-table td:nth-child(8)::before{{content:"Источник"}}.users-table td:nth-child(9)::before{{content:"Последний вход"}}.users-table td:nth-child(10)::before{{content:"Карточка"}}.users-table td:nth-child(10){{justify-content:flex-end;padding-top:10px}}.users-table td:nth-child(10)::before{{display:none}}.users-table td:nth-child(10) a{{display:block;width:100%;text-align:center;background:#d7bb73;color:#171225!important;border-radius:9px;padding:10px;text-decoration:none!important;font-weight:bold}}.compact-table{{display:block;min-width:0}}.compact-table thead{{display:none}}.compact-table tbody,.compact-table tr,.compact-table td{{display:block;width:100%}}.compact-table tr{{padding:8px 0;border-bottom:1px solid #292440}}.compact-table td{{border:0;padding:4px 0;white-space:normal;line-height:1.45}}.compact-table.payments td:nth-child(1)::before{{content:"Дата: "}}.compact-table.payments td:nth-child(2)::before{{content:"Сумма: "}}.compact-table.payments td:nth-child(3)::before{{content:"Запросов: "}}.compact-table.payments td:nth-child(4)::before{{content:"Статус: "}}.compact-table.readings td:nth-child(1)::before{{content:"Дата: "}}.compact-table.readings td:nth-child(2)::before{{content:"Клиент: "}}.compact-table.readings td:nth-child(3)::before{{content:"Колода: "}}.compact-table.readings td:nth-child(4)::before{{content:"Вопрос: "}}}}
-</style></head><body><div class="wrap"><h1>Лилит · Панель управления</h1><p class="muted">Один сервер · одна база SQLite · бот + Mini App + платежи</p><div class="grid"><div class="card">Пользователи<div class="num">{s['users']}</div></div><div class="card">Активные 7 дней<div class="num">{s['active']}</div></div><div class="card">Расклады<div class="num">{s['questions']}</div></div><div class="card">Платежи<div class="num">{s['payments']}</div></div><div class="card">Выручка<div class="num">{s['revenue']} ₽</div></div></div><br>
-<section><h2>Начислить запросы</h2>
-<form class="row" method="post" action="/admin/add-requests"><input name="uid" placeholder="Telegram ID" required><input name="amount" type="number" min="1" placeholder="Количество" required><button>Начислить пользователю</button></form>
-<hr style="border:0;border-top:1px solid #292440;margin:16px 0">
-<form class="row" method="post" action="/admin/add-requests-all" onsubmit="return window.confirm('Начислить запросы всем пользователям?')"><input name="amount" type="number" min="1" value="1" placeholder="Количество" required><button>Начислить всем пользователям</button></form>
-<p class="muted">Это добавляет запросы на общий баланс пользователя. Например, 1 запрос = один бесплатный расклад на 3 карты для пользователя без активной платной подписки.</p>
-</section><br>
-<section><h2>Ручная подписка</h2><p class="muted">Включает человеку режим расклада на 9 карт. Оплата не требуется. Запросы при этом расходуются как обычно.</p><form class="row" method="post" action="/admin/set-subscription"><input name="uid" placeholder="Telegram ID" required><button name="enabled" value="1">Включить подписку</button><button name="enabled" value="0">Отключить подписку</button></form></section><br>
-<section><h2>📢 Рассылка</h2>
-<p class="muted">Можно отправить сообщение одному пользователю, нескольким выбранным пользователям или готовой группе. Максимум 4096 символов.</p>
-<form method="post" action="/admin/broadcast" onsubmit="return window.confirm('Отправить это сообщение выбранным пользователям?')">
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-<div>
-<label>Кому</label><br>
-<select name="segment" id="broadcast-segment" onchange="toggleIds()" required>
-<option value="selected">Конкретные пользователи</option>
-<option value="all">Все пользователи</option>
-<option value="sambot">Пользователи из Sambot</option>
-<option value="with_requests">У кого есть запросы</option>
-<option value="subscribed">С активной подпиской / платными запросами</option>
-<option value="active_7d">Активные за последние 7 дней</option>
-<option value="no_readings">Кто ещё не делал расклад</option>
-</select>
-</div>
-<div id="ids-box">
-<label>Telegram ID</label><br>
-<input name="ids" id="broadcast-ids" style="width:100%;box-sizing:border-box" placeholder="123456789, 987654321">
-</div>
-<div style="grid-column:1/-1">
-<label>Сообщение</label><br>
-<textarea name="text" id="broadcast-text" maxlength="4096" placeholder="Напиши сообщение клиентам..." required></textarea>
-</div>
-<div style="grid-column:1/-1"><button type="submit">Отправить сообщение</button></div>
-</div>
-</form>
-<p class="muted">Для нескольких пользователей ID можно вставить через запятую, пробел или с новой строки.</p>
-</section><br>
-<section><h2>Источники</h2>{sources}</section><br>
-<section><div class="section-title"><h2>Последние вопросы</h2><span class="mobile-note">Новые вопросы отображаются сверху</span></div><div class="scroll"><table class="compact-table readings"><tr><th>Дата</th><th>Клиент</th><th>Колода</th><th>Вопрос</th></tr>{rrows}</table></div></section><br>
-<section><div class="section-title"><h2>Платежи</h2><span class="mobile-note">Новые оплаты отображаются сверху</span></div><div class="scroll"><table class="compact-table payments"><tr><th>Дата</th><th>Клиент</th><th>Сумма</th><th>Запросы</th><th>Статус</th></tr>{prows}</table></div></section><br>
-<section><h2>Клиенты с оплатами</h2><div class="scroll"><table><tr><th>Имя</th><th>Ник</th><th>Всего</th></tr>{top}</table></div></section><br>
-<section><div class="section-title"><h2>Пользователи</h2><span class="mobile-note">Нажми «Открыть», чтобы посмотреть карточку клиента</span></div><div class="scroll"><table class="users-table"><tr><th>ID</th><th>Имя</th><th>Ник</th><th>Всего</th><th>Бесплатные</th><th>Оплаченные</th><th>Ручная подписка</th><th>Источник</th><th>Последний вход</th><th>Карточка</th></tr>{rows}</table></div></section></div></body></html>'''
+def admin_page(search=''):
+    s=db.stats(); us=db.users(search=search); tops=db.top_payers(); src=db.source_stats(); reads=db.recent_readings(); pays=db.recent_payments()
+    with db.conn() as c:
+        f={k:c.execute(q).fetchone()['n'] for k,q in {
+          'visitors':'SELECT COUNT(*) n FROM users',
+          'engaged':"SELECT COUNT(DISTINCT user_id) n FROM events WHERE event IN ('question','reading_completed')",
+          'checkout':"SELECT COUNT(DISTINCT user_id) n FROM events WHERE event='payment_created'",
+          'buyers':"SELECT COUNT(DISTINCT user_id) n FROM events WHERE event='payment_succeeded'",
+          'pending':"SELECT COUNT(*) n FROM payments WHERE status='pending'",
+          'failed':"SELECT COUNT(*) n FROM payments WHERE status IN ('canceled','failed')",
+          'no_action':"SELECT COUNT(*) n FROM users u WHERE NOT EXISTS(SELECT 1 FROM events e WHERE e.user_id=u.id AND e.event IN ('question','payment_created'))",
+          'no_balance':'SELECT COUNT(*) n FROM users WHERE requests+paid_requests=0',
+          'no_question':"SELECT COUNT(*) n FROM users u WHERE NOT EXISTS(SELECT 1 FROM events e WHERE e.user_id=u.id AND e.event='question')",
+          'question_no_checkout':"SELECT COUNT(*) n FROM users u WHERE EXISTS(SELECT 1 FROM events e WHERE e.user_id=u.id AND e.event='question') AND NOT EXISTS(SELECT 1 FROM events e WHERE e.user_id=u.id AND e.event='payment_created')",
+          'checkout_no_sale':"SELECT COUNT(*) n FROM users u WHERE EXISTS(SELECT 1 FROM events e WHERE e.user_id=u.id AND e.event='payment_created') AND NOT EXISTS(SELECT 1 FROM events e WHERE e.user_id=u.id AND e.event='payment_succeeded')",
+          'repeat_buyers':"SELECT COUNT(*) n FROM (SELECT user_id FROM payments WHERE status='succeeded' GROUP BY user_id HAVING COUNT(*)>1)",
+          'avg_check':"SELECT COALESCE(AVG(amount),0) n FROM payments WHERE status='succeeded'"}.items()}
+    pct=lambda x,y: round(x*100/y,1) if y else 0
+    rows=''.join('<tr><td>{}</td><td><a href="/admin/user/{}">{}</a></td><td>@{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td><a href="/admin/user/{}">Открыть</a></td></tr>'.format(u['id'],u['id'],html.escape(u['name'] or 'Без имени'),html.escape(u['username'] or '—'),int(u['requests'])+int(u['paid_requests']),u['requests'],u['paid_requests'],'ВКЛ' if has_manual_subscription(u['id']) else '—',html.escape(u['source'] or 'telegram'),html.escape((u['last_seen'] or '')[:16].replace('T',' ')),u['id']) for u in us)
+    sources=''.join('<tr><td>{}</td><td>{}</td><td>{}</td><td>{} ₽</td></tr>'.format(html.escape(x['source']),x['n'],x['buyers'],x['revenue']) for x in src)
+    top=''.join('<tr><td>{}</td><td>@{}</td><td>{} ₽</td></tr>'.format(html.escape(x['name'] or ''),html.escape(x['username'] or '—'),x['total_spent']) for x in tops)
+    rrows=''.join('<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>'.format(html.escape((r['created_at'] or '')[:16].replace('T',' ')),html.escape(r['name'] or str(r['user_id'])),html.escape(DECK_NAMES.get(r['deck'],r['deck'])),html.escape((r['question'] or '')[:120])) for r in reads)
+    prows=''.join('<tr><td>{}</td><td>{}</td><td>{} ₽</td><td>{}</td><td>{}</td></tr>'.format(html.escape((p['created_at'] or '')[:16].replace('T',' ')),html.escape(p['name'] or str(p['user_id'])),p['amount'],p['requests'],html.escape(p['status'] or '')) for p in pays)
+    steps=[('Новые клиенты',f['visitors'],f['visitors']),('Проявили интерес',f['engaged'],f['visitors']),('Начали оплату',f['checkout'],f['engaged']),('Купили',f['buyers'],f['checkout'])]
+    funnel=''.join('<div class="funnelrow"><span>{}</span><div><b>{}</b><div class="bar"><i style="width:{}%"></i></div></div><span>{}%</span></div>'.format(label,val,pct(val,f['visitors']),pct(val,prev)) for label,val,prev in steps)
+    return f'''<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#090b11"><title>Lilit · кабинет</title><style>
+*{{box-sizing:border-box}}body{{margin:0;background:#090b11;color:#eee9e3;font:14px Arial,sans-serif}}.wrap{{max-width:1280px;margin:auto;padding:30px 24px}}h1,h2{{font-family:Georgia,serif;font-weight:500}}h1{{font-size:34px;margin:8px 0}}h2{{font-size:21px;margin:0 0 18px}}.eyebrow{{color:#a97860;letter-spacing:3px;font-size:9px;text-transform:uppercase}}.muted{{color:#85858c;line-height:1.6}}section,.stat{{background:#191d27;border:1px solid #292d37;padding:20px;margin:18px 0}}.stats{{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}}.stat{{margin:0;padding:16px}}.num{{font:26px Georgia;color:#e0b39a;margin-top:9px}}.grid2{{display:grid;grid-template-columns:1fr 1fr;gap:16px}}input,select,textarea,button{{font:inherit;padding:12px;background:#0d1017;color:#eee;border:1px solid #38343a}}button{{background:#3a2926;border-color:#9a6a56;color:#eac8b4;cursor:pointer}}textarea{{width:100%;min-height:110px}}form.inline{{display:flex;gap:8px;flex-wrap:wrap}}.search{{display:flex;gap:8px;margin:12px 0}}.search input{{flex:1}}table{{width:100%;border-collapse:collapse;min-width:850px}}td,th{{padding:11px 9px;border-bottom:1px solid #30313a;text-align:left;white-space:nowrap}}th{{color:#b88a73;font-size:10px;text-transform:uppercase;letter-spacing:1px}}a{{color:#e1b69e;text-decoration:none}}.scroll{{overflow:auto}}.bar{{height:7px;background:#30323a;margin:8px 0 14px}}.bar i{{display:block;height:100%;background:#a97860}}.funnelrow{{display:grid;grid-template-columns:160px 1fr 90px;gap:12px;align-items:center;margin:13px 0}}.pill{{display:inline-block;border:1px solid #59443d;padding:8px 12px;margin:4px;color:#d6b19d}}label{{display:block;color:#aaa;font-size:12px;margin:10px 0 7px}}@media(max-width:800px){{.wrap{{padding:18px 12px}}.stats{{grid-template-columns:repeat(2,1fr)}}.grid2{{grid-template-columns:1fr}}h1{{font-size:27px}}section{{padding:15px}}.funnelrow{{grid-template-columns:110px 1fr 65px;font-size:12px}}}}
+</style></head><body><main class="wrap"><div class="eyebrow">Lilit · private control room</div><h1>Личный кабинет бота</h1><p class="muted">Клиенты, коммуникации, платежи и аналитика в одном месте</p>
+<div class="stats"><div class="stat">Клиенты<div class="num">{s['users']}</div></div><div class="stat">Активные 7 дней<div class="num">{s['active']}</div></div><div class="stat">Расклады<div class="num">{s['questions']}</div></div><div class="stat">Успешные оплаты<div class="num">{s['payments']}</div></div><div class="stat">Выручка<div class="num">{s['revenue']} ₽</div></div></div>
+<section><div class="eyebrow">Sales analytics</div><h2>Воронка продаж</h2><p class="muted">Уникальные клиенты по этапам. Конверсия справа — от предыдущего этапа.</p>{funnel}<div class="grid2"><p class="muted">Ожидают оплаты: <b>{f['pending']}</b><br>Отменены / неуспешны: <b>{f['failed']}</b></p><p class="muted">Не сделали целевого действия: <b>{f['no_action']}</b><br>Нулевой баланс: <b>{f['no_balance']}</b></p><p class="muted">Средний чек: <b>{f['avg_check']:.0f} ₽</b><br>Повторные покупатели: <b>{f['repeat_buyers']}</b></p></div><p class="muted">Где теряются клиенты: без вопросов — {f['no_question']}; задавали вопрос, но не начинали оплату — {f['question_no_checkout']}; начали оплату, но покупка не подтверждена — {f['checkout_no_sale']}. Последняя группа требует проверки платежей и напоминания, вторая — оффера/цены, первая — онбординга и источника трафика. Это диагностика этапа, а не доказанная личная причина отказа: её можно узнать только из ответа клиента.</p></section>
+<div class="grid2"><section><h2>Начисление запросов</h2><form class="inline" method="post" action="/admin/add-requests"><input name="uid" placeholder="Telegram ID" required><input name="amount" type="number" min="1" placeholder="Количество" required><button>Начислить</button></form><hr style="border-color:#34333a;margin:18px 0"><form class="inline" method="post" action="/admin/add-requests-all" onsubmit="return confirm('Начислить всем?')"><input name="amount" type="number" min="1" value="1"><button>Начислить всем</button></form></section>
+<section><h2>Открыть / закрыть подписку</h2><p class="muted">Включает или отключает ручной доступ к режиму 9 карт.</p><form class="inline" method="post" action="/admin/set-subscription"><input name="uid" placeholder="Telegram ID" required><button name="enabled" value="1">Открыть</button><button name="enabled" value="0">Закрыть</button></form></section></div>
+<section><h2>Рассылка</h2><form method="post" action="/admin/broadcast" onsubmit="return confirm('Отправить рассылку?')"><div class="grid2"><div><label>Сегмент</label><select name="segment"><option value="all">Все клиенты</option><option value="selected">Выбранные ID</option><option value="sambot">Sambot</option><option value="with_requests">Есть запросы</option><option value="subscribed">Подписка / платные запросы</option><option value="active_7d">Активные 7 дней</option><option value="no_readings">Ещё не делали расклад</option><option value="horoscope">Подписаны на гороскоп</option></select></div><div><label>Telegram ID для выбранных</label><input name="ids" placeholder="ID через запятую" style="width:100%"></div></div><label>Текст сообщения</label><textarea name="text" maxlength="4096" required placeholder="Текст рассылки..."></textarea><p><button>Запустить рассылку</button></p></form></section>
+<section><h2>Все клиенты ({len(us)})</h2><form class="search" method="get" action="/admin"><input name="q" value="{html.escape(search,quote=True)}" placeholder="Поиск по имени, @username или Telegram ID"><button>Найти</button><a href="/admin" style="padding:12px">Сбросить</a></form><div class="scroll"><table><tr><th>ID</th><th>Имя</th><th>Username</th><th>Баланс</th><th>Бесплатные</th><th>Платные</th><th>Подписка</th><th>Источник</th><th>Последняя активность</th><th></th></tr>{rows or '<tr><td colspan="10">Клиенты не найдены</td></tr>'}</table></div></section>
+<div class="grid2"><section><h2>Источники и продажи</h2><div class="scroll"><table><tr><th>Источник</th><th>Клиенты</th><th>Покупатели</th><th>Выручка</th></tr>{sources}</table></div></section><section><h2>Топ покупателей</h2><div class="scroll"><table><tr><th>Имя</th><th>Ник</th><th>Потрачено</th></tr>{top}</table></div></section></div>
+<section><h2>Последние расклады</h2><div class="scroll"><table><tr><th>Дата</th><th>Клиент</th><th>Колода</th><th>Вопрос</th></tr>{rrows}</table></div></section><section><h2>Последние платежи</h2><div class="scroll"><table><tr><th>Дата</th><th>Клиент</th><th>Сумма</th><th>Запросы</th><th>Статус</th></tr>{prows}</table></div></section></main></body></html>'''
 
 @app.get('/admin/user/{uid}',response_class=HTMLResponse)
 async def admin_user(request:Request, uid:int):
@@ -1009,7 +1014,6 @@ async def admin_user(request:Request, uid:int):
     payments=db.user_payments(uid)
     events=db.user_events(uid)
     transit_readings=db.user_transit_readings(uid)
-    synastry_readings=db.user_synastry_readings(uid)
     total=int(u['requests'])+int(u['paid_requests'])
     name=html.escape(u['name'] or str(uid))
     username='@'+html.escape(u['username']) if u['username'] else '—'
@@ -1043,11 +1047,6 @@ async def admin_user(request:Request, uid:int):
         transit_rows.append(f'<div class="reading"><div class="meta"><b>Транзиты</b> · {td} · {city} · {dt}</div><div class="answer">{ans}</div></div>')
     transit_html=''.join(transit_rows) if transit_rows else '<p class="muted">Расчётов транзитов пока нет.</p>'
 
-    syn_rows=[]
-    for sr in synastry_readings:
-        dt=html.escape((sr['created_at'] or '')[:19].replace('T',' ')); n1=html.escape(sr['name1'] or 'Человек 1'); n2=html.escape(sr['name2'] or 'Человек 2'); ans=html.escape(sr['answer'] or '')
-        syn_rows.append(f'<div class="reading"><div class="meta"><b>Синастрия</b> · {n1} + {n2} · {dt}</div><div class="answer">{ans}</div></div>')
-    syn_html=''.join(syn_rows) if syn_rows else '<p class="muted">Синастрий пока нет.</p>'
 
 
     pay_rows=[]
@@ -1069,7 +1068,6 @@ async def admin_user(request:Request, uid:int):
 <section><h2>💬 Диалог с ботом</h2><div class="dialogue">{chat_html}</div></section>
 <section><h2>🔮 История раскладов</h2><p class="muted">История раскладов сохраняется отдельно и включает записи, сделанные до включения полного журнала сообщений.</p>{readings_html}</section>
 <section><h2>🌌 Транзиты</h2>{transit_html}</section>
-<section><h2>💞 Синастрия</h2>{syn_html}</section>
 <section><h2>💳 Платежи</h2><table><tr><th>Дата</th><th>Сумма</th><th>Запросов</th><th>Статус</th></tr>{payments_html}</table></section>
 <section><h2>⚙️ События</h2><table><tr><th>Дата</th><th>Событие</th><th>Данные</th></tr>{events_html}</table></section>
 </div></body></html>'''
@@ -1077,7 +1075,7 @@ async def admin_user(request:Request, uid:int):
 @app.get('/admin',response_class=HTMLResponse)
 async def admin(request:Request):
     if not auth_ok(request): return HTMLResponse('Авторизация требуется',401,headers={'WWW-Authenticate':'Basic realm="Lilit Admin"'})
-    return admin_page()
+    return admin_page(str(request.query_params.get('q','')).strip())
 
 @app.post('/admin/add-requests')
 async def admin_add(request:Request):
@@ -1145,6 +1143,7 @@ def _broadcast_targets(segment, raw_ids=''):
         'subscribed':"SELECT u.id FROM users u WHERE u.paid_requests>0 OR EXISTS (SELECT 1 FROM manual_subscriptions ms WHERE ms.user_id=u.id AND ms.enabled=1) ORDER BY u.id",
         'active_7d':"SELECT id FROM users WHERE julianday(last_seen)>=julianday('now','-7 days') ORDER BY id",
         'no_readings':"SELECT u.id FROM users u WHERE NOT EXISTS (SELECT 1 FROM readings r WHERE r.user_id=u.id) ORDER BY u.id",
+        'horoscope':"SELECT user_id id FROM horoscope_subscribers WHERE enabled=1 AND birth_date IS NOT NULL ORDER BY user_id",
     }
     if segment not in queries:
         raise ValueError('Неизвестная группа пользователей')
@@ -1202,10 +1201,14 @@ async def main():
     port=int(__import__('os').getenv('PORT','8000'))
     server=uvicorn.Server(uvicorn.Config(app,host='0.0.0.0',port=port,log_level='info'))
     payment_task=asyncio.create_task(_yookassa_reconcile_loop())
+    horoscope_task=asyncio.create_task(horoscope_dispatch_loop())
     try:
         await asyncio.gather(dp.start_polling(bot), server.serve())
     finally:
         payment_task.cancel()
+        horoscope_task.cancel()
+        try: await horoscope_task
+        except asyncio.CancelledError: pass
         try: await payment_task
         except asyncio.CancelledError: pass
         for task in list(TRANSIT_TASKS):
@@ -1214,10 +1217,5 @@ async def main():
             try: await task
             except asyncio.CancelledError: pass
 
-        for task in list(RELATION_TASKS):
-            task.cancel()
-        for task in list(RELATION_TASKS):
-            try: await task
-            except asyncio.CancelledError: pass
 
 if __name__=='__main__': asyncio.run(main())
